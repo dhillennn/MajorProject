@@ -1,0 +1,342 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Dashboard</h1>
+    <p>Phishing detection overview for the last 30 days</p>
+</div>
+
+{% if not db_available %}
+<div class="alert alert-warning">
+    Database is not connected. Statistics are unavailable. Please check your DATABASE_URL configuration.
+</div>
+{% else %}
+
+<!-- Stats Grid -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-label">Total Scans</div>
+        <div class="stat-value neutral">{{ scan_stats.total_scans or 0 }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Safe Emails</div>
+        <div class="stat-value safe">{{ scan_stats.safe_count or 0 }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Suspicious</div>
+        <div class="stat-value suspicious">{{ scan_stats.suspicious_count or 0 }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Phishing Detected</div>
+        <div class="stat-value phishing">{{ scan_stats.phishing_count or 0 }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Avg Confidence</div>
+        <div class="stat-value neutral">{{ scan_stats.avg_confidence or 0 }}%</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">User Reports</div>
+        <div class="stat-value neutral">{{ report_stats.total_reports or 0 }}</div>
+    </div>
+</div>
+
+<!-- Charts Row -->
+<div class="charts-row">
+    <div class="card chart-card">
+        <div class="card-header">
+            <h2 class="card-title">Verdict Distribution</h2>
+        </div>
+        <div class="chart-container">
+            <canvas id="verdictPieChart"></canvas>
+        </div>
+        <div class="chart-legend" id="verdictLegend"></div>
+    </div>
+    <div class="card chart-card">
+        <div class="card-header">
+            <h2 class="card-title">Daily Scan Trend</h2>
+        </div>
+        <div class="chart-container-wide">
+            <canvas id="dailyTrendChart"></canvas>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Scan Activity (Last 14 Days)</h2>
+    </div>
+    {% if daily_stats %}
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Total</th>
+                    <th>Safe</th>
+                    <th>Suspicious</th>
+                    <th>Phishing</th>
+                    <th>Distribution</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for day in daily_stats %}
+                <tr>
+                    <td>{{ day.scan_date }}</td>
+                    <td>{{ day.total }}</td>
+                    <td><span class="badge badge-safe">{{ day.safe }}</span></td>
+                    <td><span class="badge badge-suspicious">{{ day.suspicious }}</span></td>
+                    <td><span class="badge badge-phishing">{{ day.phishing }}</span></td>
+                    <td>
+                        <div class="confidence-bar">
+                            {% set safe_pct = (day.safe / day.total * 100) if day.total > 0 else 0 %}
+                            {% set sus_pct = (day.suspicious / day.total * 100) if day.total > 0 else 0 %}
+                            {% set phish_pct = (day.phishing / day.total * 100) if day.total > 0 else 0 %}
+                            <div style="display: flex; height: 100%;">
+                                <div style="width: {{ safe_pct }}%; background: var(--accent-green);"></div>
+                                <div style="width: {{ sus_pct }}%; background: var(--accent-yellow);"></div>
+                                <div style="width: {{ phish_pct }}%; background: var(--accent-red);"></div>
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <p>No scan data available yet</p>
+    </div>
+    {% endif %}
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Top Phishing Sender Domains</h2>
+    </div>
+    {% if top_senders %}
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Domain</th>
+                    <th>Phishing Emails</th>
+                    <th>Avg Confidence</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for sender in top_senders %}
+                <tr>
+                    <td>{{ sender.domain or 'Unknown' }}</td>
+                    <td>{{ sender.count }}</td>
+                    <td>
+                        <span class="badge badge-phishing">{{ sender.avg_confidence }}%</span>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <p>No phishing emails detected yet</p>
+    </div>
+    {% endif %}
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Notification Status</h2>
+    </div>
+    <div class="stats-grid" style="margin-bottom: 0;">
+        <div class="stat-card">
+            <div class="stat-label">Teams Notifications</div>
+            <div class="stat-value neutral">{{ report_stats.teams_sent or 0 }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Telegram Notifications</div>
+            <div class="stat-value neutral">{{ report_stats.telegram_sent or 0 }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">WhatsApp Notifications</div>
+            <div class="stat-value neutral">{{ report_stats.whatsapp_sent or 0 }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Unique Reporters</div>
+            <div class="stat-value neutral">{{ report_stats.unique_reporters or 0 }}</div>
+        </div>
+    </div>
+</div>
+
+{% endif %}
+
+<!-- Chart.js CDN -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Data from Flask
+    const safeCount = {{ scan_stats.safe_count or 0 }};
+    const suspiciousCount = {{ scan_stats.suspicious_count or 0 }};
+    const phishingCount = {{ scan_stats.phishing_count or 0 }};
+    const totalScans = safeCount + suspiciousCount + phishingCount;
+
+    // Color scheme
+    const colors = {
+        safe: '#22c55e',
+        suspicious: '#eab308',
+        phishing: '#ef4444',
+        safeBg: 'rgba(34, 197, 94, 0.8)',
+        suspiciousBg: 'rgba(234, 179, 8, 0.8)',
+        phishingBg: 'rgba(239, 68, 68, 0.8)'
+    };
+
+    // Verdict Pie Chart
+    if (totalScans > 0) {
+        const pieCtx = document.getElementById('verdictPieChart').getContext('2d');
+        new Chart(pieCtx, {
+            type: 'doughnut',
+            data: {
+                labels: ['Safe', 'Suspicious', 'Phishing'],
+                datasets: [{
+                    data: [safeCount, suspiciousCount, phishingCount],
+                    backgroundColor: [colors.safeBg, colors.suspiciousBg, colors.phishingBg],
+                    borderColor: ['#0f172a', '#0f172a', '#0f172a'],
+                    borderWidth: 3,
+                    hoverOffset: 10
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                cutout: '60%',
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    tooltip: {
+                        backgroundColor: '#1e293b',
+                        titleColor: '#f1f5f9',
+                        bodyColor: '#94a3b8',
+                        borderColor: '#334155',
+                        borderWidth: 1,
+                        padding: 12,
+                        callbacks: {
+                            label: function(context) {
+                                const value = context.raw;
+                                const percentage = ((value / totalScans) * 100).toFixed(1);
+                                return `${context.label}: ${value} (${percentage}%)`;
+                            }
+                        }
+                    }
+                },
+                animation: {
+                    animateRotate: true,
+                    animateScale: true
+                }
+            }
+        });
+
+        // Custom legend
+        const legendHtml = `
+            <div class="legend-item">
+                <span class="legend-color" style="background: ${colors.safe}"></span>
+                <span class="legend-label">Safe</span>
+                <span class="legend-value">${safeCount} (${((safeCount/totalScans)*100).toFixed(1)}%)</span>
+            </div>
+            <div class="legend-item">
+                <span class="legend-color" style="background: ${colors.suspicious}"></span>
+                <span class="legend-label">Suspicious</span>
+                <span class="legend-value">${suspiciousCount} (${((suspiciousCount/totalScans)*100).toFixed(1)}%)</span>
+            </div>
+            <div class="legend-item">
+                <span class="legend-color" style="background: ${colors.phishing}"></span>
+                <span class="legend-label">Phishing</span>
+                <span class="legend-value">${phishingCount} (${((phishingCount/totalScans)*100).toFixed(1)}%)</span>
+            </div>
+        `;
+        document.getElementById('verdictLegend').innerHTML = legendHtml;
+    }
+
+    // Daily Trend Chart
+    const dailyStats = {{ daily_stats | tojson }};
+    if (dailyStats && dailyStats.length > 0) {
+        // Reverse to show oldest first
+        const reversed = [...dailyStats].reverse();
+        const labels = reversed.map(d => {
+            const date = new Date(d.scan_date);
+            return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        });
+
+        const trendCtx = document.getElementById('dailyTrendChart').getContext('2d');
+        new Chart(trendCtx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'Safe',
+                        data: reversed.map(d => d.safe),
+                        backgroundColor: colors.safeBg,
+                        borderRadius: 4
+                    },
+                    {
+                        label: 'Suspicious',
+                        data: reversed.map(d => d.suspicious),
+                        backgroundColor: colors.suspiciousBg,
+                        borderRadius: 4
+                    },
+                    {
+                        label: 'Phishing',
+                        data: reversed.map(d => d.phishing),
+                        backgroundColor: colors.phishingBg,
+                        borderRadius: 4
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    intersect: false,
+                    mode: 'index'
+                },
+                scales: {
+                    x: {
+                        stacked: true,
+                        grid: { display: false },
+                        ticks: { color: '#94a3b8' }
+                    },
+                    y: {
+                        stacked: true,
+                        beginAtZero: true,
+                        grid: { color: '#334155' },
+                        ticks: { color: '#94a3b8' }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            color: '#94a3b8',
+                            padding: 20,
+                            usePointStyle: true,
+                            pointStyle: 'circle'
+                        }
+                    },
+                    tooltip: {
+                        backgroundColor: '#1e293b',
+                        titleColor: '#f1f5f9',
+                        bodyColor: '#94a3b8',
+                        borderColor: '#334155',
+                        borderWidth: 1
+                    }
+                }
+            }
+        });
+    }
+});
+</script>
+{% endblock %}
