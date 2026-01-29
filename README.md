@@ -22,10 +22,10 @@ A production-ready phishing detection system that integrates with Microsoft Outl
 ┌─────────────────────────────────┐         HTTPS          ┌─────────────────────────────────────┐
 │   Outlook Add-in (Taskpane)     │ ──────────────────────►│          Flask Backend              │
 │                                 │    Cloudflare Tunnel   │                                     │
-│   - Scan Email button           │                        │  ┌─────────────────────────────┐   │
-│   - Auto-scan mode              │    POST /check         │  │   Parallel Detection        │   │
-│   - Quarantine button           │◄──────────────────────┐│  │                             │   │
-│   - Report Phishing button      │   {verdict, scores,   ││  │  1. BERT Model (30%)        │   │
+│   - Scan Email button           │                        │   ┌─────────────────────────────┐   │
+│   - Auto-scan mode              │    POST /check         │   │   Parallel Detection        │   │
+│   - Quarantine button           │◄──────────────────────┐│   │                             │   │
+│   - Report Phishing button      │   {verdict, scores,   ││   │  1. BERT Model (30%)        │   │
 │   - Verdict display             │    reasons, indicators}││  │  2. Sublime Security (20%)  │   │
 │                                 │                        ││  │  3. HTML Threats (8%)       │   │
 └─────────────────────────────────┘                        ││  │  4. Header Mismatch (7%)    │   │
