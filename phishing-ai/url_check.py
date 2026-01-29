@@ -70,10 +70,3 @@ def urlscan_check_url(
         }
 
     raise TimeoutError(f"urlscan result not ready within {timeout_s}s (last_status={last_status})")
-
-
-
-# EXAMPLE USAGE
-# from url_check import urlscan_check_url
-# result = urlscan_check_url("https://example.com", api_key=os.getenv("URLSCAN_API_KEY"))
-# print(result)

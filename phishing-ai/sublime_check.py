@@ -11,7 +11,7 @@ def sublime_attack_score(
     raise_for_http_errors: bool = True
 ) -> Dict[str, Any]:
     """
-    Equivalent to your Tines HTTP request:
+    HTTP Request:
 
       POST https://analyzer.sublime.security/v0/messages/attack_score
       JSON: { "raw_message": "<rfc822>" }
@@ -38,10 +38,3 @@ def sublime_attack_score(
         data = {"error": "Non-JSON response", "status_code": resp.status_code, "text": resp.text[:500]}
 
     return data
-
-
-
-#-- EXAMPLE USAGE
-
-#-- from sublime_security_check import sublime_attack_score
-#--score_result = sublime_attack_score(raw_message_rfc822=email_text)

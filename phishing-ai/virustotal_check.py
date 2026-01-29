@@ -35,7 +35,7 @@ def virustotal_lookup_file_hash(
     while True:
         resp = requests.get(url, headers=headers, timeout=timeout_s)
 
-        # Rate limited: retry like your Tines config
+        # Rate limited: retry
         if resp.status_code == 429 and attempt < max_retries_429:
             sleep_for = backoff_s * (2 ** attempt)
             time.sleep(sleep_for)
@@ -63,14 +63,3 @@ def virustotal_lookup_file_hash(
             "status_code": resp.status_code,
             "raw": data,
         }
-
-
-
-#-- EXAMPLE USAGE
-
-#-- from virustotal_check import virustotal_lookup_file_hash
-
-#-- result = virustotal_lookup_file_hash("your_sha256_here")
-#-- if result["found"]:
-#--    vt_raw = result["raw"]
-
