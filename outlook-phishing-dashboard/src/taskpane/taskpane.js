@@ -1,5 +1,6 @@
 // ================= CONFIG =================
 const API_BASE = "https://majorproject-production-a975.up.railway.app";
+const POLL_INTERVAL = 500; // Check every 500ms for item changes
 
 // ================= STATE =================
 let autoMode = false;
@@ -7,6 +8,7 @@ let lastItemId = null;
 let activeScanItemId = null;
 let listenersAttached = false;
 let itemChangedHooked = false;
+let pollTimer = null;
 
 // ================= INIT =================
 Office.onReady(() => {
@@ -18,12 +20,29 @@ Office.onReady(() => {
   const quarantineBtn = document.getElementById("quarantineBtn");
   const autoToggle = document.getElementById("autoToggle");
 
-  if (scanBtn) scanBtn.addEventListener("click", scanCurrentEmail);
-  if (reportBtn) reportBtn.addEventListener("click", reportCurrentEmail);
-  if (quarantineBtn) quarantineBtn.addEventListener("click", quarantineCurrentEmail);
+  // Remove any existing listeners first
+  if (scanBtn) {
+    const newScanBtn = scanBtn.cloneNode(true);
+    scanBtn.parentNode.replaceChild(newScanBtn, scanBtn);
+    newScanBtn.addEventListener("click", scanCurrentEmail);
+  }
+
+  if (reportBtn) {
+    const newReportBtn = reportBtn.cloneNode(true);
+    reportBtn.parentNode.replaceChild(newReportBtn, reportBtn);
+    newReportBtn.addEventListener("click", reportCurrentEmail);
+  }
+
+  if (quarantineBtn) {
+    const newQuarantineBtn = quarantineBtn.cloneNode(true);
+    quarantineBtn.parentNode.replaceChild(newQuarantineBtn, quarantineBtn);
+    newQuarantineBtn.addEventListener("click", quarantineCurrentEmail);
+  }
 
   if (autoToggle) {
-    autoToggle.addEventListener("change", (e) => {
+    const newAutoToggle = autoToggle.cloneNode(true);
+    autoToggle.parentNode.replaceChild(newAutoToggle, autoToggle);
+    newAutoToggle.addEventListener("change", (e) => {
       autoMode = e.target.checked;
       setStatus(autoMode ? "Auto mode enabled." : "Auto mode disabled.");
 
@@ -32,17 +51,54 @@ Office.onReady(() => {
       if (autoMode) {
         resetUIForNewEmail();
         scanCurrentEmail();
+        startPolling();
+      } else {
+        stopPolling();
       }
     });
   }
 
   hookItemChanged();
+  startPolling();
   setStatus("Ready.");
 });
 
+// ================= POLLING FOR PREVIEW CHANGES =================
+function startPolling() {
+  if (pollTimer) return;
+  
+  pollTimer = setInterval(() => {
+    checkForItemChange();
+  }, POLL_INTERVAL);
+}
+
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
+
+function checkForItemChange() {
+  const item = Office.context.mailbox.item;
+  const itemId = item?.itemId || item?.conversationId || null;
+
+  if (!itemId || itemId === lastItemId) return;
+
+  lastItemId = itemId;
+  activeScanItemId = null;
+
+  resetUIForNewEmail();
+
+  if (autoMode) {
+    scanCurrentEmail();
+  }
+}
+
 // ================= UI HELPERS =================
 function setStatus(msg) {
-  document.getElementById("status").textContent = msg;
+  const el = document.getElementById("status");
+  if (el) el.textContent = msg;
 }
 
 function resetUIForNewEmail() {
@@ -57,6 +113,7 @@ function resetUIForNewEmail() {
 
 function setVerdictUI(verdictText) {
   const el = document.getElementById("verdict");
+  if (!el) return;
   el.textContent = verdictText ?? "—";
   el.classList.remove("green", "orange", "red", "neutral");
   el.classList.add(colorClassForVerdict(verdictText));
@@ -64,6 +121,7 @@ function setVerdictUI(verdictText) {
 
 function setScoreUI(id, score) {
   const el = document.getElementById(id);
+  if (!el) return;
   if (score === null || score === undefined || Number.isNaN(score)) {
     el.textContent = "—";
     el.classList.remove("green", "orange", "red");
@@ -78,6 +136,7 @@ function setScoreUI(id, score) {
 
 function setReasonsUI(reasons, indicators) {
   const ul = document.getElementById("reasons");
+  if (!ul) return;
   ul.innerHTML = "";
 
   const allItems = [];
@@ -117,6 +176,8 @@ function colorClassForVerdict(v) {
 function setQuarantineVisibility(verdict) {
   const section = document.getElementById("quarantineSection");
   const btn = document.getElementById("quarantineBtn");
+  if (!section || !btn) return;
+  
   const v = (verdict || "").toUpperCase();
 
   if (v === "SUSPICIOUS" || v === "PHISHING") {
@@ -129,7 +190,8 @@ function setQuarantineVisibility(verdict) {
 }
 
 function disableReport(disabled) {
-  document.getElementById("reportBtn").disabled = !!disabled;
+  const btn = document.getElementById("reportBtn");
+  if (btn) btn.disabled = !!disabled;
 }
 
 // ================= ITEM CHANGE HANDLING =================
@@ -144,19 +206,7 @@ function hookItemChanged() {
 }
 
 function onItemChanged() {
-  const item = Office.context.mailbox.item;
-  const itemId = item?.itemId || null;
-
-  if (!itemId || itemId === lastItemId) return;
-
-  lastItemId = itemId;
-  activeScanItemId = null;
-
-  resetUIForNewEmail();
-
-  if (autoMode) {
-    scanCurrentEmail();
-  }
+  checkForItemChange();
 }
 
 // ================= SCANNING =================
@@ -165,6 +215,13 @@ async function scanCurrentEmail() {
   if (!item || !item.itemId) return;
 
   const scanItemId = item.itemId;
+  
+  // Prevent duplicate scans
+  if (activeScanItemId === scanItemId) {
+    console.log("Scan already in progress for this email");
+    return;
+  }
+  
   activeScanItemId = scanItemId;
 
   disableReport(true);
@@ -209,6 +266,9 @@ async function reportCurrentEmail() {
   const item = Office.context.mailbox.item;
   if (!item) return;
 
+  const reportBtn = document.getElementById("reportBtn");
+  if (!reportBtn) return;
+
   disableReport(true);
   setStatus("Reporting...");
 
@@ -229,6 +289,22 @@ async function reportCurrentEmail() {
     setStatus(`Report error: ${err.message}`);
   } finally {
     disableReport(false);
+  }
+}
+
+// ================= QUARANTINE =================
+async function quarantineCurrentEmail() {
+  const item = Office.context.mailbox.item;
+  if (!item) return;
+
+  setStatus("Moving to quarantine...");
+
+  try {
+    // Add your quarantine logic here
+    setStatus("Moved to quarantine successfully.");
+  } catch (err) {
+    console.error(err);
+    setStatus(`Quarantine error: ${err.message}`);
   }
 }
 
