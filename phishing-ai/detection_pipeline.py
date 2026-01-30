@@ -597,7 +597,7 @@ class DetectionPipeline:
             encoded_email = base64.b64encode(email_data["raw"].encode()).decode()
             result = sublime_attack_score(
                 encoded_email,
-                timeout_s=15,
+                timeout_s=20,
                 raise_for_http_errors=False
             )
 
@@ -891,8 +891,8 @@ class DetectionPipeline:
         Uses a hybrid approach: weighted average + boost for strong signals.
         """
         weights = {
-            "bert_model": 0.50,
-            "sublime": 0.20,
+            "bert_model": 0.55,
+            "sublime": 0.15,
             "urlscan": 0.05,
             "virustotal": 0.04,
             "header_mismatch": 0.03,
