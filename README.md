@@ -25,18 +25,18 @@ A production-ready phishing detection system that integrates with Microsoft Outl
 │   - Scan Email button           │                        │   ┌─────────────────────────────┐   │
 │   - Auto-scan mode              │    POST /check         │   │   Parallel Detection        │   │
 │   - Quarantine button           │◄──────────────────────┐│   │                             │   │
-│   - Report Phishing button      │   {verdict, scores,   ││   │  1. BERT Model (30%)        │   │
+│   - Report Phishing button      │   {verdict, scores,   ││   │  1. BERT Model (50%)        │   │
 │   - Verdict display             │    reasons, indicators}││  │  2. Sublime Security (20%)  │   │
-│                                 │                        ││  │  3. HTML Threats (8%)       │   │
-└─────────────────────────────────┘                        ││  │  4. Header Mismatch (7%)    │   │
-                                                           ││  │  5. Urgency Keywords (7%)   │   │
+│                                 │                        ││  │  3. HTML Threats (2%)       │   │
+└─────────────────────────────────┘                        ││  │  4. Header Mismatch (3%)    │   │
+                                                           ││  │  5. Urgency Keywords (8%)   │   │
                                                            ││  │  6. URLScan.io (5%)         │   │
-                                                           ││  │  7. URL Shorteners (5%)     │   │
-                                                           ││  │  8. Suspicious TLDs (4%)    │   │
-                                                           ││  │  9. DNS Records (4%)        │   │
+                                                           ││  │  7. URL Shorteners (3%)     │   │
+                                                           ││  │  8. Suspicious TLDs (2%)    │   │
+                                                           ││  │  9. DNS Records (1%)        │   │
                                                            ││  │  10. VirusTotal (4%)        │   │
-                                                           ││  │  11. SPF Record (3%)        │   │
-                                                           ││  │  12. Domain Age (3%)        │   │
+                                                           ││  │  11. SPF Record (1%)        │   │
+                                                           ││  │  12. Domain Age (1%)        │   │
                                                            ││  │                             │   │
                                                            ││  │  + Gemini AI Reasoning      │   │
                                                            ││  └─────────────────────────────┘   │
@@ -87,18 +87,18 @@ The platform runs 12 detection checks in parallel and aggregates results using w
 
 | Check | Weight | Description |
 |-------|--------|-------------|
-| BERT Model | 30% | HuggingFace phishing classifier |
+| BERT Model | 50% | HuggingFace phishing classifier |
 | Sublime Security | 20% | Commercial attack score API |
-| HTML Threats | 8% | Hidden elements, suspicious scripts |
-| Header Mismatch | 7% | From vs Reply-To comparison |
-| Urgency Keywords | 7% | Pressure language detection |
+| HTML Threats | 2% | Hidden elements, suspicious scripts |
+| Header Mismatch | 3% | From vs Reply-To comparison |
+| Urgency Keywords | 8% | Pressure language detection |
 | URLScan.io | 5% | URL maliciousness scanning |
-| URL Shorteners | 5% | Detects bit.ly, t.co, etc. |
-| Suspicious TLDs | 4% | Flags .xyz, .top, .club, etc. |
-| DNS Records | 4% | Validates sender domain |
+| URL Shorteners | 3% | Detects bit.ly, t.co, etc. |
+| Suspicious TLDs | 2% | Flags .xyz, .top, .club, etc. |
+| DNS Records | 1% | Validates sender domain |
 | VirusTotal | 4% | Hash reputation lookup |
-| SPF Record | 3% | Email authentication check |
-| Domain Age | 3% | WHOIS creation date check |
+| SPF Record | 1% | Email authentication check |
+| Domain Age | 1% | WHOIS creation date check |
 
 ### Verdict Thresholds
 
