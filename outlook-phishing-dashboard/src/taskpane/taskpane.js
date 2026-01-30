@@ -149,8 +149,12 @@ function setScoreUI(id, score) {
   }
   const v = Math.max(0, Math.min(100, Number(score)));
   el.textContent = `${v.toFixed(0)}%`;
+
+  // Get current verdict text
+  const verdictText = document.getElementById("verdict")?.textContent;
+
   el.classList.remove("green", "orange", "red", "neutral");
-  el.classList.add(colorClassForScore(v));
+  el.classList.add(colorClassForConfidence(v, verdictText));
 }
 
 function setReasonsUI(reasons, indicators) {
@@ -178,10 +182,21 @@ function setReasonsUI(reasons, indicators) {
   });
 }
 
-function colorClassForScore(score) {
-  if (score >= 70) return "red";
-  if (score >= 40) return "orange";
-  return "green";
+function colorClassForConfidence(score, verdict) {
+  const v = (verdict || "").toLowerCase();
+
+  // Low confidence is always warning
+  if (score < 40) return "orange";
+
+  // Medium confidence is caution
+  if (score < 70) return "orange";
+
+  // High confidence → follow verdict
+  if (v.includes("phish")) return "red";
+  if (v.includes("susp")) return "orange";
+  if (v.includes("safe") || v.includes("legit")) return "green";
+
+  return "neutral";
 }
 
 function colorClassForVerdict(v) {
