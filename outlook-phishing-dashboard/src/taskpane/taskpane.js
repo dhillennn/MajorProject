@@ -46,9 +46,8 @@ Office.onReady(() => {
       autoMode = e.target.checked;
       setStatus(autoMode ? "Auto mode enabled." : "Auto mode disabled.");
 
-      hookItemChanged();
-
       if (autoMode) {
+        hookItemChanged();
         resetUIForNewEmail();
         scanCurrentEmail();
         startPolling();
@@ -58,8 +57,9 @@ Office.onReady(() => {
     });
   }
 
+  // Hook ItemChanged so Office.context.mailbox.item updates properly when selecting emails
   hookItemChanged();
-  startPolling();
+  // Don't start polling by default - only when auto mode is enabled
   setStatus("Ready.");
 });
 
@@ -83,13 +83,32 @@ function checkForItemChange() {
   const item = Office.context.mailbox.item;
   const itemId = item?.itemId || item?.conversationId || null;
 
-  if (!itemId || itemId === lastItemId) return;
+  // Skip if no valid ID
+  if (!itemId) return;
+  
+  // Create signature for comparison
+  const subject = item.subject || "";
+  const from = item.from?.emailAddress || "";
+  const emailSignature = `${itemId}_${subject}_${from}`;
+  
+  // Skip if same item
+  if (emailSignature === lastItemId) return;
+  
+  // Skip if scan is actively processing the previous item
+  if (activeScanItemId === lastItemId) {
+    console.log("Scan in progress for previous item");
+    return;
+  }
 
-  lastItemId = itemId;
+  // New item detected
+  console.log("ItemChanged detected - new email selected");
+  lastItemId = emailSignature;
   activeScanItemId = null;
-
+  
+  // Always reset UI when email changes
   resetUIForNewEmail();
 
+  // Only auto-scan if in auto mode
   if (autoMode) {
     scanCurrentEmail();
   }
@@ -212,17 +231,38 @@ function onItemChanged() {
 // ================= SCANNING =================
 async function scanCurrentEmail() {
   const item = Office.context.mailbox.item;
-  if (!item || !item.itemId) return;
+  if (!item) {
+    console.log("No item found");
+    setStatus("No email selected.");
+    return;
+  }
 
-  const scanItemId = item.itemId;
+  // Use multiple identifiers to detect email changes
+  const scanItemId = item.itemId || item.conversationId || item.internetMessageId || Date.now().toString();
+  const subject = item.subject || "";
+  const from = item.from?.emailAddress || "";
   
-  // Prevent duplicate scans
-  if (activeScanItemId === scanItemId) {
+  // Create a unique identifier combining multiple properties
+  const emailSignature = `${scanItemId}_${subject}_${from}`;
+  
+  console.log("Scan requested for:", scanItemId);
+  console.log("Subject:", subject);
+  console.log("From:", from);
+  console.log("Email signature:", emailSignature);
+  console.log("Last scanned:", lastItemId);
+  console.log("Currently scanning:", activeScanItemId);
+  
+  // Prevent duplicate scans of the SAME email
+  if (activeScanItemId === emailSignature) {
     console.log("Scan already in progress for this email");
     return;
   }
   
-  activeScanItemId = scanItemId;
+  // Update tracking
+  lastItemId = emailSignature;
+  activeScanItemId = emailSignature;
+  
+  console.log("Starting scan for:", emailSignature);
 
   disableReport(true);
   setStatus("Extracting email...");
@@ -243,7 +283,10 @@ async function scanCurrentEmail() {
     const data = await res.json();
 
     // 🚨 Email changed mid-scan → discard
-    if (activeScanItemId !== scanItemId) return;
+    if (activeScanItemId !== emailSignature) {
+      console.log("Email changed during scan, discarding results");
+      return;
+    }
 
     setVerdictUI(data.verdict);
     setScoreUI("aiScore", data.ai_score);
@@ -252,10 +295,15 @@ async function scanCurrentEmail() {
     setQuarantineVisibility(data.verdict);
 
     disableReport(false);
+    activeScanItemId = null; // Clear so same email can be rescanned if needed
     setStatus("Scan complete.");
   } catch (err) {
     console.error(err);
-    if (activeScanItemId !== scanItemId) return;
+    if (activeScanItemId !== emailSignature) {
+      console.log("Email changed during scan, discarding error");
+      return;
+    }
+    activeScanItemId = null; // Clear on error
     setStatus(`Error: ${err.message}`);
     resetUIForNewEmail();
   }
@@ -295,45 +343,177 @@ async function reportCurrentEmail() {
 // ================= QUARANTINE =================
 async function quarantineCurrentEmail() {
   const item = Office.context.mailbox.item;
-  if (!item) return;
+  if (!item) {
+    setStatus("No email item found.");
+    return;
+  }
 
+  const btn = document.getElementById("quarantineBtn");
+  btn.disabled = true;
+  btn.innerHTML = '<span class="btn-icon">⏳</span> Moving...';
   setStatus("Moving to quarantine...");
 
   try {
-    // Add your quarantine logic here
-    setStatus("Moved to quarantine successfully.");
+    const itemId = item.itemId;
+    if (!itemId) {
+      throw new Error("Cannot get email ID");
+    }
+
+    await moveToQuarantineEWS(itemId);
+
+    btn.classList.add("success");
+    btn.innerHTML = '<span class="btn-icon">✓</span> Quarantined';
+    setStatus("Email moved to Quarantine folder.");
+
+    try {
+      const eml = await getEmlFromItem(item);
+      await fetch(`${API_BASE}/report`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ eml, quarantined: true })
+      });
+    } catch (reportErr) {
+      console.warn("Auto-report after quarantine failed:", reportErr);
+    }
+
   } catch (err) {
-    console.error(err);
-    setStatus(`Quarantine error: ${err.message}`);
+    console.error("Quarantine error:", err);
+    btn.disabled = false;
+    btn.innerHTML = '<span class="btn-icon">🛡️</span> Move to Quarantine';
+    setStatus(`Quarantine failed: ${err.message}`);
   }
+}
+
+function moveToQuarantineEWS(itemId) {
+  return new Promise((resolve, reject) => {
+    const ewsId = convertToEwsId(itemId);
+
+    const soapRequest = `<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+               xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+               xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
+               xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"
+               xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
+  <soap:Header>
+    <t:RequestServerVersion Version="Exchange2013"/>
+  </soap:Header>
+  <soap:Body>
+    <m:MoveItem>
+      <m:ToFolderId>
+        <t:DistinguishedFolderId Id="junkemail"/>
+      </m:ToFolderId>
+      <m:ItemIds>
+        <t:ItemId Id="${ewsId}"/>
+      </m:ItemIds>
+    </m:MoveItem>
+  </soap:Body>
+</soap:Envelope>`;
+
+    Office.context.mailbox.makeEwsRequestAsync(soapRequest, (result) => {
+      if (result.status === Office.AsyncResultStatus.Failed) {
+        tryAlternativeMove(itemId).then(resolve).catch(reject);
+        return;
+      }
+
+      const response = result.value;
+      if (response.includes("ResponseClass=\"Success\"")) {
+        resolve();
+      } else if (response.includes("ErrorMoveCopyFailed") || response.includes("ErrorItemNotFound")) {
+        reject(new Error("Email may have already been moved or deleted"));
+      } else {
+        tryAlternativeMove(itemId).then(resolve).catch(reject);
+      }
+    });
+  });
+}
+
+function convertToEwsId(itemId) {
+  if (itemId.startsWith("AAM")) return itemId;
+  return itemId;
+}
+
+async function tryAlternativeMove(itemId) {
+  return new Promise((resolve, reject) => {
+    const item = Office.context.mailbox.item;
+    if (Office.context.mailbox.restUrl) {
+      moveViaRest(itemId)
+        .then(resolve)
+        .catch(() => reject(new Error("Could not move email. Please manually move to Junk folder.")));
+    } else {
+      reject(new Error("Move not supported. Please manually move to Junk folder."));
+    }
+  });
+}
+
+async function moveViaRest(itemId) {
+  const restUrl = Office.context.mailbox.restUrl;
+  const accessToken = await getAccessToken();
+
+  const response = await fetch(`${restUrl}/v2.0/me/messages/${itemId}/move`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${accessToken}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ DestinationId: "JunkEmail" })
+  });
+
+  if (!response.ok) {
+    throw new Error(`REST move failed: ${response.status}`);
+  }
+}
+
+function getAccessToken() {
+  return new Promise((resolve, reject) => {
+    Office.context.mailbox.getCallbackTokenAsync({ isRest: true }, (result) => {
+      if (result.status === Office.AsyncResultStatus.Succeeded) {
+        resolve(result.value);
+      } else {
+        reject(new Error("Could not get access token"));
+      }
+    });
+  });
 }
 
 // ================= EML =================
 async function getEmlFromItem(item) {
-  const pseudo = await buildPseudoEml(item);
-  return `__BASE64_EML__:${btoa(unescape(encodeURIComponent(pseudo)))}`;
+  try {
+    const pseudo = await buildPseudoEml(item);
+    const base64 = btoa(unescape(encodeURIComponent(pseudo)));
+    return `__BASE64_EML__:${base64}`;
+  } catch (err) {
+    console.error("Failed to build EML:", err);
+    throw new Error("Could not extract email content");
+  }
 }
 
 async function buildPseudoEml(item) {
   let headers = "";
   try {
-    if (item.getAllInternetHeadersAsync) {
+    if (typeof item.getAllInternetHeadersAsync === "function") {
       headers = await getAsyncProm(item, item.getAllInternetHeadersAsync, {});
     }
   } catch {}
 
-  const bodyText = await getAsyncProm(item, item.body.getAsync, { coercionType: Office.CoercionType.Text }).catch(() => "");
-  const bodyHtml = await getAsyncProm(item, item.body.getAsync, { coercionType: Office.CoercionType.Html }).catch(() => "");
+  let bodyText = "";
+  try {
+    bodyText = await getAsyncProm(item, item.body.getAsync, { coercionType: Office.CoercionType.Text });
+  } catch {}
+
+  let bodyHtml = "";
+  try {
+    bodyHtml = await getAsyncProm(item, item.body.getAsync, { coercionType: Office.CoercionType.Html });
+  } catch {}
 
   const subject = item.subject || "";
-  const from = item.from?.emailAddress || "";
-  const to = (item.to || []).map(x => x.emailAddress).join(", ");
+  const from = item.from?.emailAddress || item.from?.displayName || "";
+  const to = (item.to || []).map(x => x.emailAddress || x.displayName).join(", ");
   const boundary = "----=_NextPart_" + Date.now().toString(36);
 
   let eml = `From: ${from}
 To: ${to}
 Subject: ${subject}
-${headers || ""}
+${headers ? headers.trim() : ""}
 MIME-Version: 1.0`;
 
   if (bodyHtml) {
