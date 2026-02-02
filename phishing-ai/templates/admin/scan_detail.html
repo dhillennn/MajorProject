@@ -98,6 +98,91 @@
 </div>
 {% endif %}
 
+{% if mail_route and mail_route|length > 0 %}
+<div class="card route-card">
+  <div class="card-header route-header">
+    <h2 class="card-title">Email Route</h2>
+    <span class="badge badge-safe route-badge">{{ mail_route|length }} hops</span>
+  </div>
+
+  <div class="route-chart">
+    <div class="route-chart-inner">
+      <canvas id="routeDelayChart"></canvas>
+    </div>
+  </div>
+
+  <div class="route-table-wrap">
+    <table class="route-table">
+      <thead>
+        <tr>
+          <th class="col-hop">Hop</th>
+          <th class="col-delay">Delay</th>
+          <th class="col-from">From</th>
+          <th class="col-by">By</th>
+          <th class="col-with">With</th>
+          <th class="col-tls">TLS</th>
+          <th class="col-time">Time (UTC)</th>
+          <th class="col-status">Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for hop in mail_route %}
+        <tr class="route-row">
+          <td class="mono">{{ loop.index }}</td>
+
+          <td class="mono">
+            {% if loop.index == 1 %}
+              *
+            {% else %}
+              {{ hop.get('delay_s', 0) }}s
+            {% endif %}
+          </td>
+
+          <td class="wrap">{{ hop.get('from') or '-' }}</td>
+          <td class="wrap">{{ hop.get('by') or '-' }}</td>
+          <td class="wrap">{{ hop.get('with') or '-' }}</td>
+
+          <td class="mono">{{ hop.get('tls') or '-' }}</td>
+          
+          <td class="col-time">
+            <div class="time-cell">
+                <span class="time-text" id="time-{{ loop.index }}">
+                {{ hop.get('time') or '-' }}
+                </span>
+
+                {% if hop.get('time') and (hop.get('time')|length > 28) %}
+                <button type="button" class="view-more"
+                        onclick="toggleTime('{{ loop.index }}', this)">
+                    View more
+                </button>
+                {% endif %}
+            </div>
+          </td>
+
+          <td>
+            {% if hop.get('tls') %}
+              <span class="status ok"><span class="dot"></span>OK</span>
+            {% else %}
+              <span class="status warn"><span class="dot"></span>Check</span>
+            {% endif %}
+          </td>
+        </tr>
+
+        <tr class="route-raw-row">
+          <td colspan="8">
+            <details class="route-raw">
+              <summary>Show raw</summary>
+              <pre class="json-viewer">{{ hop.get('raw') }}</pre>
+            </details>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
 {% if scan.check_results %}
 <div class="card">
     <div class="card-header">
@@ -114,7 +199,9 @@
         <button class="btn btn-secondary" onclick="toggleEmailView()">Toggle HTML View</button>
     </div>
     <div id="email-raw" class="email-content">
-        <pre class="email-viewer">{{ scan.email_body }}</pre>
+        <div class="email-scrollbox">
+            <pre class="email-raw">{{ scan.email_body }}</pre>
+        </div> 
     </div>
     <div id="email-rendered" class="email-content" style="display: none;">
         <div class="email-rendered-warning">
@@ -162,4 +249,45 @@
 <div style="margin-top: 1.5rem;">
     <a href="/admin/scans" class="btn btn-secondary">Back to Scans</a>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  const canvas = document.getElementById('routeDelayChart');
+  if (!canvas || !window.Chart) return;
+
+  const route = {{ mail_route | tojson }};
+  const labels = route.map((_, i) => `Hop ${i+1}`);
+  const delays = route.map((h, i) => (i === 0 ? 0 : (h.delay_s || 0)));
+
+  new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Relay Delay (seconds)',
+        data: delays,
+        borderWidth: 1,
+        borderRadius: 6
+      }]
+    },
+    options: {
+      indexAxis: 'y',             
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: {
+          beginAtZero: true,
+          title: { display: true, text: 'Seconds' }
+        },
+        y: {
+          title: { display: true, text: 'Hop' }
+        }
+      }
+    }
+  });
+})();
+</script>
 {% endblock %}

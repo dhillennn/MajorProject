@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Literal
 from email import message_from_string
 import email.utils
+from email.utils import parsedate_to_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,8 @@ class PipelineResult:
     check_results: Dict[str, CheckResult] = field(default_factory=dict)
     email_hash: Optional[str] = None
 
+    # Email route (Received header hops)
+    mail_route: List[Dict[str, Any]] = field(default_factory=list)
 
 class DetectionPipeline:
     """
@@ -267,6 +270,87 @@ class DetectionPipeline:
             except:
                 pass
         return domains
+    
+    # --- Email route extraction
+
+    def _extract_received_headers(self, raw_email: str) -> List[str]:
+        """
+        Extract folded 'Received:' headers and return in origin->destination order.
+        Handles header folding (lines starting with whitespace).
+        """
+        hops: List[str] = []
+        current = ""
+
+        for line in raw_email.splitlines():
+            if line.lower().startswith("received:"):
+                if current:
+                    hops.append(current)
+                current = line.strip()
+            elif current and (line.startswith(" ") or line.startswith("\t")):
+                # Continuation line (folded header)
+                current += " " + line.strip()
+
+        if current:
+            hops.append(current)
+
+        # Headers appear newest-first, reverse to show origin -> destination
+        return list(reversed(hops))
+
+    def _parse_received_header(self, header: str) -> Dict[str, Any]:
+        """
+        Best-effort parsing of a Received header.
+        Received format varies between MTAs, so keep it tolerant.
+        """
+        def grab(pattern: str) -> Optional[str]:
+            m = re.search(pattern, header, re.IGNORECASE)
+            return m.group(1).strip() if m else None
+
+        # These patterns try to avoid greedy matching
+        from_part = grab(r"\bfrom\s+(.+?)(?=\s+by\s)")
+        by_part = grab(r"\bby\s+(.+?)(?=\s+with|\s+id|\s+via|\s*;)")
+        with_part = grab(r"\bwith\s+(.+?)(?=\s+id|\s+via|\s*;)")
+        tls_part = grab(r"\b(TLS[^\s;,]+)")
+        time_part = grab(r";\s*(.+)$")
+
+        return {
+            "raw": header,
+            "from": from_part,
+            "by": by_part,
+            "with": with_part,
+            "tls": tls_part,
+            "time": time_part,
+        }
+
+    def build_mail_route(self, raw_email: str, max_hops: int = 15) -> List[Dict[str, Any]]:
+        """
+        Build a list of hops for UI display, including parsed time and delay per hop.
+        Returns [] if no Received headers exist.
+        """
+        if not raw_email:
+            return []
+
+        received_headers = self._extract_received_headers(raw_email)[:max_hops]
+        hops = [self._parse_received_header(h) for h in received_headers]
+
+        # Parse times and compute delays
+        prev_dt = None
+        for hop in hops:
+            hop["time_iso"] = None
+            hop["delay_s"] = 0
+
+            t = hop.get("time")
+            if t:
+                try:
+                    dt = parsedate_to_datetime(t)
+                    hop["time_iso"] = dt.astimezone().isoformat()
+                    if prev_dt:
+                        hop["delay_s"] = max(0, int((dt - prev_dt).total_seconds()))
+                    prev_dt = dt
+                except Exception:
+                    # If time cannot be parsed, keep delay=0 and time_iso=None
+                    pass
+
+        return hops
 
     # --- Individual Check Methods ---
 
@@ -615,7 +699,7 @@ class DetectionPipeline:
             logger.info(f"After cleanup - Last 500 chars: {raw[-500:]}")
             logger.info("=== SUBLIME DEBUG END ===")
 
-            encoded_email = base64.b64encode(raw.encode()).decode()
+            encoded_email = raw
             result = sublime_attack_score(
                 encoded_email,
                 timeout_s=20,
