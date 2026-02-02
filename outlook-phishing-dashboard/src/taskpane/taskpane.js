@@ -503,13 +503,26 @@ async function getEmlFromItem(item) {
 }
 
 async function buildPseudoEml(item) {
-  let headers = "";
+  let fullHeaders = "";
   try {
     if (typeof item.getAllInternetHeadersAsync === "function") {
-      headers = await getAsyncProm(item, item.getAllInternetHeadersAsync, {});
+      fullHeaders = await getAsyncProm(item, item.getAllInternetHeadersAsync, {});
     }
   } catch {}
 
+  // 🔧 If we got full headers from Outlook, use them directly
+  if (fullHeaders && fullHeaders.trim().length > 100) {
+    let eml = fullHeaders.trim();
+    
+    // 🔧 Remove Outlook's "Attachments:" summary that breaks RFC822 format
+    if (eml.includes("\nAttachments:\n")) {
+      eml = eml.split("\nAttachments:\n")[0];
+    }
+    
+    return eml;
+  }
+
+  // 🔧 Fallback: Build email from scratch if getAllInternetHeadersAsync unavailable
   let bodyText = "";
   try {
     bodyText = await getAsyncProm(item, item.body.getAsync, { coercionType: Office.CoercionType.Text });
@@ -528,7 +541,6 @@ async function buildPseudoEml(item) {
   let eml = `From: ${from}
 To: ${to}
 Subject: ${subject}
-${headers ? headers.trim() : ""}
 MIME-Version: 1.0`;
 
   if (bodyHtml) {
@@ -551,12 +563,6 @@ ${bodyHtml}
 Content-Type: text/plain; charset="utf-8"
 
 ${bodyText}`;
-  }
-
-  // Remove Outlook's "Attachments:" summary that breaks RFC822 format
-  // This is sometimes appended by getAllInternetHeadersAsync() in Outlook
-  if (eml.includes("\nAttachments:\n")) {
-    eml = eml.split("\nAttachments:\n")[0];
   }
 
   return eml;
