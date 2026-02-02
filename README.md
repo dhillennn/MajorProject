@@ -25,8 +25,8 @@ A production-ready phishing detection system that integrates with Microsoft Outl
 │   - Scan Email button           │                        │   ┌─────────────────────────────┐   │
 │   - Auto-scan mode              │    POST /check         │   │   Parallel Detection        │   │
 │   - Quarantine button           │◄──────────────────────┐│   │                             │   │
-│   - Report Phishing button      │   {verdict, scores,   ││   │  1. BERT Model (50%)        │   │
-│   - Verdict display             │    reasons, indicators}││  │  2. Sublime Security (20%)  │   │
+│   - Report Phishing button      │   {verdict, scores,   ││   │  1. BERT Model (55%)        │   │
+│   - Verdict display             │    reasons, indicators}││  │  2. Sublime Security (15%)  │   │
 │                                 │                        ││  │  3. HTML Threats (2%)       │   │
 └─────────────────────────────────┘                        ││  │  4. Header Mismatch (3%)    │   │
                                                            ││  │  5. Urgency Keywords (8%)   │   │
