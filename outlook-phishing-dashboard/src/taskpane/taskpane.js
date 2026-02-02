@@ -503,26 +503,15 @@ async function getEmlFromItem(item) {
 }
 
 async function buildPseudoEml(item) {
-  let fullHeaders = "";
+  // Get transport headers from Outlook (Received, Authentication-Results, etc.)
+  let transportHeaders = "";
   try {
     if (typeof item.getAllInternetHeadersAsync === "function") {
-      fullHeaders = await getAsyncProm(item, item.getAllInternetHeadersAsync, {});
+      transportHeaders = await getAsyncProm(item, item.getAllInternetHeadersAsync, {});
     }
   } catch {}
 
-  // 🔧 If we got full headers from Outlook, use them directly
-  if (fullHeaders && fullHeaders.trim().length > 100) {
-    let eml = fullHeaders.trim();
-    
-    // 🔧 Remove Outlook's "Attachments:" summary that breaks RFC822 format
-    if (eml.includes("\nAttachments:\n")) {
-      eml = eml.split("\nAttachments:\n")[0];
-    }
-    
-    return eml;
-  }
-
-  // 🔧 Fallback: Build email from scratch if getAllInternetHeadersAsync unavailable
+  // Get email body in both formats
   let bodyText = "";
   try {
     bodyText = await getAsyncProm(item, item.body.getAsync, { coercionType: Office.CoercionType.Text });
@@ -533,36 +522,60 @@ async function buildPseudoEml(item) {
     bodyHtml = await getAsyncProm(item, item.body.getAsync, { coercionType: Office.CoercionType.Html });
   } catch {}
 
-  const subject = item.subject || "";
-  const from = item.from?.emailAddress || item.from?.displayName || "";
-  const to = (item.to || []).map(x => x.emailAddress || x.displayName).join(", ");
-  const boundary = "----=_NextPart_" + Date.now().toString(36);
+  // Get basic headers from item
+  const subject = item.subject || "(No Subject)";
+  const from = item.from?.emailAddress || item.from?.displayName || "unknown@unknown.com";
+  const to = (item.to || []).map(x => x.emailAddress || x.displayName).join(", ") || "undisclosed-recipients";
+  const date = item.dateTimeCreated ? new Date(item.dateTimeCreated).toUTCString() : new Date().toUTCString();
+  const messageId = item.internetMessageId || `<${Date.now()}@outlook.com>`;
 
+  // Build proper RFC822 structure
+  // RFC822 REQUIRES these headers at the top:
   let eml = `From: ${from}
 To: ${to}
 Subject: ${subject}
-MIME-Version: 1.0`;
+Date: ${date}
+Message-ID: ${messageId}
+`;
 
-  if (bodyHtml) {
-    eml += `
+  // Add transport headers if available
+  if (transportHeaders && transportHeaders.trim()) {
+    let cleanHeaders = transportHeaders.trim();
+    
+    // Remove "Attachments:" summary if present
+    if (cleanHeaders.includes("\nAttachments:\n")) {
+      cleanHeaders = cleanHeaders.split("\nAttachments:\n")[0];
+    }
+    
+    eml += cleanHeaders + "\n";
+  }
+
+  // Add MIME structure with body
+  const boundary = "----=_NextPart_" + Date.now().toString(36);
+  
+  if (bodyHtml && bodyHtml.trim()) {
+    eml += `MIME-Version: 1.0
 Content-Type: multipart/alternative; boundary="${boundary}"
 
 --${boundary}
 Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
 
-${bodyText}
+${bodyText || ""}
 
 --${boundary}
 Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
 
 ${bodyHtml}
 
 --${boundary}--`;
   } else {
-    eml += `
+    eml += `MIME-Version: 1.0
 Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
 
-${bodyText}`;
+${bodyText || ""}`;
   }
 
   return eml;
