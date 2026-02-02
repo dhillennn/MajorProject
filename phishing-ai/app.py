@@ -712,9 +712,18 @@ def admin_scan_detail(scan_id: str):
     if not scan:
         abort(404)
 
+    pipeline = get_pipeline()
+
+    raw_email = scan.get("email_body") or ""
+    email_data = pipeline.parse_email(raw_email) 
+    decoded_raw = email_data.get("raw") or raw_email
+
+    mail_route = pipeline.build_mail_route(decoded_raw)
+
     return render_template(
         "admin/scan_detail.html",
-        scan=scan
+        scan=scan,
+        mail_route=mail_route
     )
 
 
