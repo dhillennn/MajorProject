@@ -594,7 +594,28 @@ class DetectionPipeline:
         """Run Sublime Security attack score API."""
         try:
             # Sublime API requires base64-encoded RFC822 message
-            encoded_email = base64.b64encode(email_data["raw"].encode()).decode()
+            raw = email_data["raw"]
+            
+            # 🔍 DEBUG: Log what we're sending
+            logger.info("=== SUBLIME DEBUG START ===")
+            logger.info(f"Raw email length: {len(raw)} characters")
+            logger.info(f"First 500 chars: {raw[:500]}")
+            logger.info(f"Last 500 chars: {raw[-500:]}")
+            
+            # Check if "Attachments:" is still present
+            if "Attachments:" in raw:
+                logger.warning("⚠️ WARNING: 'Attachments:' found in raw email!")
+                # Try to strip it here as a backup
+                if "\nAttachments:\n" in raw:
+                    raw = raw.split("\nAttachments:\n")[0]
+                    logger.info("✅ Stripped 'Attachments:' section from raw email")
+            else:
+                logger.info("✅ No 'Attachments:' found - email looks clean")
+            
+            logger.info(f"After cleanup - Last 500 chars: {raw[-500:]}")
+            logger.info("=== SUBLIME DEBUG END ===")
+
+            encoded_email = base64.b64encode(raw.encode()).decode()
             result = sublime_attack_score(
                 encoded_email,
                 timeout_s=20,

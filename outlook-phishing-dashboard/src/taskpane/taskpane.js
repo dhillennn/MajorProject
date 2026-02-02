@@ -553,6 +553,12 @@ Content-Type: text/plain; charset="utf-8"
 ${bodyText}`;
   }
 
+  // Remove Outlook's "Attachments:" summary that breaks RFC822 format
+  // This is sometimes appended by getAllInternetHeadersAsync() in Outlook
+  if (eml.includes("\nAttachments:\n")) {
+    eml = eml.split("\nAttachments:\n")[0];
+  }
+
   return eml;
 }
 
