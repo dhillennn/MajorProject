@@ -43,8 +43,7 @@ A production-ready phishing detection system that integrates with Microsoft Outl
                                                            │└─────────────────────────────────────┘
                                                            │
                                  POST /report              │  ──► Teams Webhook
-                                 {eml, reporter}           │  ──► Telegram Bot
-                                                           └──► WhatsApp (Twilio)
+                                 {eml, reporter}           └──► Telegram Bot
 ```
 
 ## Quick Start
