@@ -13,8 +13,6 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Literal
 from email import message_from_string
 import email.utils
-from email.message import EmailMessage
-from email.utils import formatdate
 
 logger = logging.getLogger(__name__)
 
@@ -216,47 +214,6 @@ class DetectionPipeline:
             "full_text": f"Subject: {subject}\n\n{body_text}",
             "attachments": attachments
         }
-
-    def build_rfc822_email(self, email_data: Dict) -> bytes:
-        """
-        Rebuild a clean RFC822 email from parsed email_data.
-        This is ONLY used for Sublime Security.
-        """
-
-        msg = EmailMessage()
-
-        # --- Core headers ---
-        msg["From"] = email_data.get("from", "unknown@example.com")
-        msg["To"] = ", ".join(email_data.get("to", [])) if isinstance(email_data.get("to"), list) else email_data.get("to", "")
-        msg["Subject"] = email_data.get("subject", "")
-        msg["Date"] = email_data.get("date") or formatdate(localtime=True)
-
-        # --- Body ---
-        text_body = email_data.get("body_text")
-        html_body = email_data.get("body_html")
-
-        if text_body and html_body:
-            msg.set_content(text_body)
-            msg.add_alternative(html_body, subtype="html")
-        elif html_body:
-            msg.set_content("This email contains HTML content only.")
-            msg.add_alternative(html_body, subtype="html")
-        else:
-            msg.set_content(text_body or "")
-
-        # --- Attachments ---
-        for att in email_data.get("attachments", []):
-            try:
-                msg.add_attachment(
-                    att["content"],                # MUST be raw bytes
-                    maintype=att.get("maintype", "application"),
-                    subtype=att.get("subtype", "octet-stream"),
-                    filename=att.get("filename", "attachment"),
-                )
-            except Exception as e:
-                logger.warning(f"Failed to attach {att.get('filename')}: {e}")
-
-        return msg.as_bytes()
 
     def _extract_attachment(self, part) -> Optional[Dict[str, Any]]:
         """Extract attachment metadata and compute hashes."""
@@ -637,10 +594,7 @@ class DetectionPipeline:
         """Run Sublime Security attack score API."""
         try:
             # Sublime API requires base64-encoded RFC822 message
-            # Build a clean RFC822 email JUST for Sublime
-            rfc822_bytes = self.build_rfc822_email(email_data)
-
-            encoded_email = base64.b64encode(rfc822_bytes).decode()
+            encoded_email = base64.b64encode(email_data["raw"].encode()).decode()
             result = sublime_attack_score(
                 encoded_email,
                 timeout_s=20,
