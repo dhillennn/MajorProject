@@ -86,8 +86,8 @@ The platform runs 12 detection checks in parallel and aggregates results using w
 
 | Check | Weight | Description |
 |-------|--------|-------------|
-| BERT Model | 50% | HuggingFace phishing classifier |
-| Sublime Security | 20% | Commercial attack score API |
+| BERT Model | 55% | HuggingFace phishing classifier |
+| Sublime Security | 15% | Commercial attack score API |
 | HTML Threats | 2% | Hidden elements, suspicious scripts |
 | Header Mismatch | 3% | From vs Reply-To comparison |
 | Urgency Keywords | 8% | Pressure language detection |
