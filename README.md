@@ -1,6 +1,6 @@
 # AI-Powered Phishing Detection Platform
 
-A production-ready phishing detection system that integrates with Microsoft Outlook via an Add-in taskpane. The platform uses AI/ML models and threat intelligence APIs to analyze emails and provide real-time phishing verdicts.
+A production-ready phishing detection system that integrates directly with Microsoft Outlook via an Add-in taskpane. The platform uses AI/ML models and threat intelligence APIs to analyze emails and provide real-time phishing verdicts.
 
 ## Features
 
