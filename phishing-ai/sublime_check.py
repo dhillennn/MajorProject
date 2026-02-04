@@ -22,10 +22,6 @@ def sublime_attack_score(
     Returns the raw JSON response from Sublime.
     """
     payload = {"raw_message": raw_message_rfc822}
-    
-    # 🔍 DEBUG: Log what we're sending to Sublime
-    logger.info(f"🔍 Sublime API call - Message length: {len(raw_message_rfc822)} chars")
-    logger.info(f"🔍 Chars of payload: {raw_message_rfc822}")
 
     resp = requests.post(
         SUBLIME_ATTACK_SCORE_URL,
@@ -33,10 +29,6 @@ def sublime_attack_score(
         headers={"Content-Type": "application/json"},
         timeout=timeout_s
     )
-    
-    # 🔍 DEBUG: Log response
-    logger.info(f"🔍 Sublime response status: {resp.status_code}")
-    logger.info(f"🔍 Sublime response text: {resp.text[:500]}")
 
     # Minimal + predictable error handling
     if raise_for_http_errors and resp.status_code >= 400:

@@ -503,7 +503,7 @@ async function getEmlFromItem(item) {
 }
 
 async function buildPseudoEml(item) {
-  // Get transport headers from Outlook
+  // Get transport headers from Outlook (Received, Authentication-Results, etc.)
   let transportHeaders = "";
   try {
     if (typeof item.getAllInternetHeadersAsync === "function") {
@@ -511,7 +511,7 @@ async function buildPseudoEml(item) {
     }
   } catch {}
 
-  // Get email body
+  // Get email body in both formats
   let bodyText = "";
   try {
     bodyText = await getAsyncProm(item, item.body.getAsync, { coercionType: Office.CoercionType.Text });
@@ -522,14 +522,15 @@ async function buildPseudoEml(item) {
     bodyHtml = await getAsyncProm(item, item.body.getAsync, { coercionType: Office.CoercionType.Html });
   } catch {}
 
-  // Get basic info from item
+  // Get basic headers from item
   const subject = item.subject || "(No Subject)";
   const from = item.from?.emailAddress || item.from?.displayName || "unknown@unknown.com";
   const to = (item.to || []).map(x => x.emailAddress || x.displayName).join(", ") || "undisclosed-recipients";
   const date = item.dateTimeCreated ? new Date(item.dateTimeCreated).toUTCString() : new Date().toUTCString();
   const messageId = item.internetMessageId || `<${Date.now()}@outlook.com>`;
 
-  // Build RFC822 message starting with required headers
+  // Build proper RFC822 structure
+  // RFC822 REQUIRES these headers at the top:
   let eml = `From: ${from}
 To: ${to}
 Subject: ${subject}
@@ -537,30 +538,16 @@ Date: ${date}
 Message-ID: ${messageId}
 `;
 
-  // Clean up transport headers if we have them
+  // Add transport headers if available
   if (transportHeaders && transportHeaders.trim()) {
     let cleanHeaders = transportHeaders.trim();
     
-    // Remove "Attachments:" summary
+    // Remove "Attachments:" summary if present
     if (cleanHeaders.includes("\nAttachments:\n")) {
       cleanHeaders = cleanHeaders.split("\nAttachments:\n")[0];
     }
     
-    // Remove MIME headers and body from transport headers
-    // We only want Received, Authentication-Results, DKIM, etc.
-    const mimeStart = cleanHeaders.search(/\nMIME-Version:/i);
-    if (mimeStart !== -1) {
-      cleanHeaders = cleanHeaders.substring(0, mimeStart);
-    }
-    
-    const contentTypeStart = cleanHeaders.search(/\nContent-Type:/i);
-    if (contentTypeStart !== -1) {
-      cleanHeaders = cleanHeaders.substring(0, contentTypeStart);
-    }
-    
-    if (cleanHeaders.trim()) {
-      eml += cleanHeaders.trim() + "\n";
-    }
+    eml += cleanHeaders + "\n";
   }
 
   // Add MIME structure with body

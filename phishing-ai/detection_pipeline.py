@@ -678,25 +678,9 @@ class DetectionPipeline:
     def check_sublime_security(self, email_data: Dict) -> CheckResult:
         """Run Sublime Security attack score API."""
         try:
+            # Sublime API requires base64-encoded RFC822 message
             raw = email_data["raw"]
-            
-            logger.info("=== SUBLIME DEBUG START ===")
-            logger.info(f"Raw email length: {len(raw)} characters")
-            logger.info(f"First 500 chars: {raw[:500]}")
-            logger.info(f"Last 500 chars: {raw[-500:]}")
-            
-            # Check if "Attachments:" is present
-            if "Attachments:" in raw:
-                logger.warning("⚠️ WARNING: 'Attachments:' found in raw email!")
-                if "\nAttachments:\n" in raw:
-                    raw = raw.split("\nAttachments:\n")[0]
-                    logger.info("✅ Stripped 'Attachments:' section")
-            else:
-                logger.info("✅ No 'Attachments:' found - email looks clean")
-            
-            logger.info("=== SUBLIME DEBUG END ===")
 
-            # Encode and send to Sublime
             encoded_email = base64.b64encode(raw.encode()).decode()
             result = sublime_attack_score(
                 encoded_email,
@@ -704,20 +688,13 @@ class DetectionPipeline:
                 raise_for_http_errors=False
             )
 
-            # DEBUG: Log Sublime's actual response
-            logger.info(f"🔍 SUBLIME RAW RESPONSE: {result}")
-
             if "error" in result:
-                logger.error(f"❌ Sublime returned error: {result.get('error')}")
                 return CheckResult(name="sublime", error=result.get("error"))
 
-            # Extract values
+            # Sublime returns score 0-100 and verdict (malicious/benign)
             score = result.get("score", 0)
             verdict = result.get("verdict", "unknown")
             top_signals = result.get("top_signals", [])
-            
-            # DEBUG: Log parsed values
-            logger.info(f"✅ Score: {score}, Verdict: {verdict}, Signals: {top_signals}")
 
             return CheckResult(
                 name="sublime",
@@ -726,12 +703,11 @@ class DetectionPipeline:
                 details={
                     "score": score,
                     "verdict": verdict,
-                    "top_signals": top_signals[:3] if top_signals else [],
+                    "top_signals": top_signals[:3],
                     "graymail_score": result.get("graymail_score", 0)
                 }
             )
         except Exception as e:
-            logger.exception(f"❌ Exception in check_sublime_security: {e}")
             return CheckResult(name="sublime", error=str(e))
 
     def check_urlscan(self, email_data: Dict) -> CheckResult:
