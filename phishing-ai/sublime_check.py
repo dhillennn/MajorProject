@@ -25,8 +25,7 @@ def sublime_attack_score(
     
     # 🔍 DEBUG: Log what we're sending to Sublime
     logger.info(f"🔍 Sublime API call - Message length: {len(raw_message_rfc822)} chars")
-    logger.info(f"🔍 First 200 chars of payload: {raw_message_rfc822[:200]}")
-    logger.info(f"🔍 Last 200 chars of payload: {raw_message_rfc822[-200:]}")
+    logger.info(f"🔍 Chars of payload: {raw_message_rfc822}")
 
     resp = requests.post(
         SUBLIME_ATTACK_SCORE_URL,
