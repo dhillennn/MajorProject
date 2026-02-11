@@ -22,14 +22,14 @@ def sublime_attack_score(
     Returns the raw JSON response from Sublime.
     
     Args:
-        raw_message_rfc822: Plain text RFC822 email (already decoded)
+        raw_message_rfc822: Plain text RFC822 email (NOT base64 encoded)
     """
     
-    # The email is already decoded plain text - use it directly
-    payload = {"raw_message": raw_message_rfc822}
+    # Verify input looks like an email
+    if not raw_message_rfc822.strip().lower().startswith(('from:', 'received:', 'return-path:')):
+        logger.warning(f"Input doesn't look like RFC822 email. First 100 chars: {raw_message_rfc822[:100]}")
     
-    # Debug: Log first 500 chars to verify it's plain text
-    logger.info(f"Sending to Sublime (first 500 chars): {raw_message_rfc822[:500]}")
+    payload = {"raw_message": raw_message_rfc822}
 
     resp = requests.post(
         SUBLIME_ATTACK_SCORE_URL,
@@ -40,7 +40,7 @@ def sublime_attack_score(
 
     # Minimal + predictable error handling
     if raise_for_http_errors and resp.status_code >= 400:
-        logger.error(f"Sublime API error response: {resp.text[:500]}")
+        logger.error(f"Sublime API error: {resp.text[:500]}")
         raise RuntimeError(f"Sublime attack_score failed [{resp.status_code}]: {resp.text[:300]}")
 
     # Some endpoints might return non-json errors; handle gracefully

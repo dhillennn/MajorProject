@@ -352,6 +352,33 @@ class DetectionPipeline:
                     pass
 
         return hops
+    
+    def _strip_base64_sections(self, eml: str) -> str:
+        """Remove base64-encoded sections from EML to avoid Sublime parsing errors."""
+        lines = eml.split('\n')
+        result = []
+        in_base64_section = False
+        
+        for line in lines:
+            # Detect start of base64 section
+            if 'Content-Transfer-Encoding: base64' in line:
+                in_base64_section = True
+                result.append(line)
+                continue
+            
+            # Detect end of base64 section (next MIME boundary or header)
+            if in_base64_section:
+                # Check if we hit a boundary or new header
+                if line.startswith('--') or (line and ':' in line and not line.startswith(' ')):
+                    in_base64_section = False
+                    result.append(line)
+                else:
+                    # Skip base64 content lines
+                    result.append('[base64 content removed]')
+            else:
+                result.append(line)
+        
+        return '\n'.join(result)
 
     # --- Individual Check Methods ---
 
@@ -681,9 +708,16 @@ class DetectionPipeline:
             # email_data["raw"] is already decoded plain text RFC822
             raw = email_data["raw"]
             
-            # DO NOT base64 encode again - Sublime expects plain RFC822 text in JSON
+            # CRITICAL: Remove any base64-encoded sections from the email
+            # Sublime can't handle base64 content in attachments
+            if "Content-Transfer-Encoding: base64" in raw:
+                logger.warning("Email contains base64 sections - stripping them for Sublime")
+                raw = self._strip_base64_sections(raw)
+            
+            # IMPORTANT: Do NOT base64 encode here!
+            # Send plain text RFC822 directly
             result = sublime_attack_score(
-                raw,  # Send as-is, it's already plain text
+                raw,  # Send as-is (plain text RFC822)
                 timeout_s=20,
                 raise_for_http_errors=False
             )
@@ -708,6 +742,7 @@ class DetectionPipeline:
                 }
             )
         except Exception as e:
+            logger.error(f"Sublime check failed: {e}")
             return CheckResult(name="sublime", error=str(e))
 
     def check_urlscan(self, email_data: Dict) -> CheckResult:

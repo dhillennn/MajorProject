@@ -534,43 +534,113 @@ async function getBodyWithRetry(item, coercionType, retries = 3, delay = 300) {
 }
 
 async function buildPseudoEml(item) {
-  const bodyText = await getBodyWithRetry(item, Office.CoercionType.Text);
-  
-  const subject = item.subject || "(No Subject)";
-  const from = item.from?.emailAddress || "unknown@unknown.com";
-  const to = (item.to || []).map(x => x.emailAddress).filter(Boolean).join(", ") || "undisclosed";
-  const date = new Date().toUTCString();
-  const messageId = `<${Date.now()}@outlook.com>`;
+  // Get transport headers
+  let transportHeaders = "";
+  try {
+    if (typeof item.getAllInternetHeadersAsync === "function") {
+      transportHeaders = await getAsyncProm(item, item.getAllInternetHeadersAsync, {});
+    }
+  } catch (err) {
+    console.warn("Could not get transport headers:", err);
+  }
 
-  // Minimal RFC822 - no multipart, no base64, just plain text
-  return `From: ${from}
+  // Get email body - TEXT ONLY
+  const bodyText = await getBodyWithRetry(item, Office.CoercionType.Text);
+
+  // Get basic headers
+  const subject = item.subject || "(No Subject)";
+  const from = item.from?.emailAddress || item.from?.displayName || "unknown@unknown.com";
+  const to = (item.to || []).map(x => x.emailAddress || x.displayName).join(", ") || "undisclosed-recipients";
+  const date = item.dateTimeCreated ? new Date(item.dateTimeCreated).toUTCString() : new Date().toUTCString();
+  const messageId = item.internetMessageId || `<${Date.now()}@outlook.com>`;
+
+  // AGGRESSIVELY FILTER transport headers to remove ALL base64 content
+  const forbiddenHeaders = [
+    'from:', 'to:', 'subject:', 'date:', 'message-id:',
+    'mime-version:', 'content-type:', 'content-transfer-encoding:'
+  ];
+  
+  let cleanHeaders = '';
+  if (transportHeaders && transportHeaders.trim()) {
+    const headerLines = transportHeaders.split('\n');
+    let skipSection = false;
+    
+    cleanHeaders = headerLines
+      .filter(line => {
+        const lower = line.toLowerCase().trim();
+        
+        // Skip forbidden headers
+        if (forbiddenHeaders.some(h => lower.startsWith(h))) {
+          return false;
+        }
+        
+        // Start skipping when we see base64 encoding
+        if (lower.includes('content-transfer-encoding: base64')) {
+          skipSection = true;
+          return false;
+        }
+        
+        // Start skipping when we see multipart boundaries
+        if (lower.includes('content-type: multipart')) {
+          skipSection = true;
+          return false;
+        }
+        
+        // Skip continuation lines when in skip mode
+        if (skipSection && (line.startsWith(' ') || line.startsWith('\t'))) {
+          return false;
+        }
+        
+        // New header = stop skipping
+        if (line.includes(':') && !line.startsWith(' ') && !line.startsWith('\t')) {
+          skipSection = false;
+        }
+        
+        // Skip if still in skip mode
+        if (skipSection) {
+          return false;
+        }
+        
+        // Skip empty lines or lines that look like base64 data
+        if (!line.trim() || /^[A-Za-z0-9+/=]{60,}$/.test(line)) {
+          return false;
+        }
+        
+        return true;
+      })
+      .join('\n');
+    
+    // Remove attachments summary
+    if (cleanHeaders.includes("\nAttachments:\n")) {
+      cleanHeaders = cleanHeaders.split("\nAttachments:\n")[0];
+    }
+  }
+
+  // Build MINIMAL RFC822 - plain text only, NO multipart, NO base64
+  let eml = `From: ${from}
 To: ${to}
 Subject: ${subject}
 Date: ${date}
 Message-ID: ${messageId}
-MIME-Version: 1.0
+`;
+
+  // Add filtered headers
+  if (cleanHeaders.trim()) {
+    eml += cleanHeaders.trim() + '\n';
+  }
+
+  // Simple plain text body - NO MIME multipart!
+  eml += `MIME-Version: 1.0
 Content-Type: text/plain; charset="utf-8"
 Content-Transfer-Encoding: 7bit
 
-${bodyText || ""}`;
-}
+`;
 
-// Add this helper function for quoted-printable encoding
-function encodeQuotedPrintable(text) {
-  if (!text) return "";
-  
-  // Simple quoted-printable encoding: encode non-ASCII and special chars
-  return text
-    .split('')
-    .map(char => {
-      const code = char.charCodeAt(0);
-      // Encode non-ASCII (>127) and special characters
-      if (code > 127 || char === '=' || code < 32 && char !== '\n' && char !== '\r' && char !== '\t') {
-        return '=' + code.toString(16).toUpperCase().padStart(2, '0');
-      }
-      return char;
-    })
-    .join('');
+  // Add body (ensure it's plain text)
+  const safeBody = (bodyText || "").replace(/[^\x00-\x7F]/g, '?'); // Remove non-ASCII
+  eml += safeBody;
+
+  return eml;
 }
 
 // ================= ATTACHMENTS =================
