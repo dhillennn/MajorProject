@@ -353,29 +353,81 @@ class DetectionPipeline:
 
         return hops
     
-    def _strip_base64_sections(self, eml: str) -> str:
-        """Remove base64-encoded sections from EML to avoid Sublime parsing errors."""
+    def _clean_email_for_sublime(self, eml: str) -> str:
+        """
+        Clean email to avoid Sublime parsing errors.
+        
+        Removes:
+        1. RFC 2047 encoded-word headers (=?charset?encoding?content?=)
+        2. Base64 encoded sections
+        3. Problematic headers that cause parsing issues
+        """
+        import re
+        
         lines = eml.split('\n')
         result = []
+        in_encoded_header = False
         in_base64_section = False
+        current_header = None
+        
+        # Headers to completely skip
+        skip_headers = [
+            'x-microsoft-antispam-message-info',
+            'x-microsoft-antispam',
+            'dkim-signature',
+            'arc-seal',
+            'arc-message-signature',
+            'arc-authentication-results'
+        ]
         
         for line in lines:
-            # Detect start of base64 section
-            if 'Content-Transfer-Encoding: base64' in line:
+            lower_line = line.lower().strip()
+            
+            # Check if this is a new header line
+            if line and ':' in line and not line.startswith((' ', '\t')):
+                # Extract header name
+                header_name = line.split(':', 1)[0].lower().strip()
+                current_header = header_name
+                
+                # Skip problematic headers entirely
+                if any(skip in header_name for skip in skip_headers):
+                    in_encoded_header = True
+                    continue
+                
+                # Check for RFC 2047 encoded-word in header value
+                if '=?' in line and '?=' in line:
+                    # This header has encoded content - skip it
+                    in_encoded_header = True
+                    continue
+                
+                in_encoded_header = False
+            
+            # Skip continuation lines of encoded headers
+            if in_encoded_header and line.startswith((' ', '\t')):
+                # Check if this continuation line also has encoded-word
+                if '=?' in line and '?=' in line:
+                    continue
+                # Even without =?, skip continuation of problematic headers
+                if current_header and any(skip in current_header for skip in skip_headers):
+                    continue
+                # Reset if we hit a normal continuation
+                in_encoded_header = False
+            
+            # Detect and skip base64 sections
+            if 'content-transfer-encoding: base64' in lower_line:
                 in_base64_section = True
                 result.append(line)
                 continue
             
-            # Detect end of base64 section (next MIME boundary or header)
             if in_base64_section:
-                # Check if we hit a boundary or new header
-                if line.startswith('--') or (line and ':' in line and not line.startswith(' ')):
+                # Check if we hit a boundary or new header (end of base64 section)
+                if line.startswith('--') or (line and ':' in line and not line.startswith((' ', '\t'))):
                     in_base64_section = False
                     result.append(line)
                 else:
-                    # Skip base64 content lines
-                    result.append('[base64 content removed]')
-            else:
+                    # Skip base64 content
+                    continue
+            elif not in_encoded_header:
                 result.append(line)
         
         return '\n'.join(result)
@@ -705,19 +757,14 @@ class DetectionPipeline:
     def check_sublime_security(self, email_data: Dict) -> CheckResult:
         """Run Sublime Security attack score API."""
         try:
-            # email_data["raw"] is already decoded plain text RFC822
             raw = email_data["raw"]
             
-            # CRITICAL: Remove any base64-encoded sections from the email
-            # Sublime can't handle base64 content in attachments
-            if "Content-Transfer-Encoding: base64" in raw:
-                logger.warning("Email contains base64 sections - stripping them for Sublime")
-                raw = self._strip_base64_sections(raw)
+            # CRITICAL: Clean the email to remove problematic headers
+            raw = self._clean_email_for_sublime(raw)
             
-            # IMPORTANT: Do NOT base64 encode here!
-            # Send plain text RFC822 directly
+            # Send plain text RFC822 directly (NO base64 encoding)
             result = sublime_attack_score(
-                raw,  # Send as-is (plain text RFC822)
+                raw,
                 timeout_s=20,
                 raise_for_http_errors=False
             )
