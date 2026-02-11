@@ -502,6 +502,37 @@ async function getEmlFromItem(item) {
   }
 }
 
+// ================= BODY EXTRACTION WITH PROPER ERROR HANDLING =================
+async function getBodyWithRetry(item, coercionType, retries = 3, delay = 300) {
+  let lastError = null;
+  
+  for (let i = 0; i < retries; i++) {
+    try {
+      const body = await new Promise((resolve, reject) => {
+        item.body.getAsync(coercionType, (result) => {
+          if (result.status === Office.AsyncResultStatus.Succeeded) {
+            resolve(result.value || "");
+          } else {
+            reject(new Error(result.error?.message || "Body extraction failed"));
+          }
+        });
+      });
+      
+      // Return body even if empty (empty is valid)
+      return body;
+    } catch (err) {
+      lastError = err;
+      console.warn(`Body extraction attempt ${i + 1} failed:`, err);
+      if (i < retries - 1) {
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
+  }
+  
+  console.error("All body extraction attempts failed:", lastError);
+  return ""; // Return empty string as fallback
+}
+
 async function buildPseudoEml(item) {
   // Get transport headers from Outlook (Received, Authentication-Results, etc.)
   let transportHeaders = "";
@@ -509,18 +540,18 @@ async function buildPseudoEml(item) {
     if (typeof item.getAllInternetHeadersAsync === "function") {
       transportHeaders = await getAsyncProm(item, item.getAllInternetHeadersAsync, {});
     }
-  } catch {}
+  } catch (err) {
+    console.warn("Could not get transport headers:", err);
+  }
 
   // Get email body in both formats
-  let bodyText = "";
-  try {
-    bodyText = await getAsyncProm(item, item.body.getAsync, { coercionType: Office.CoercionType.Text });
-  } catch {}
+  const bodyText = await getBodyWithRetry(item, Office.CoercionType.Text);
+  let bodyHtml = await getBodyWithRetry(item, Office.CoercionType.Html);
 
-  let bodyHtml = "";
-  try {
-    bodyHtml = await getAsyncProm(item, item.body.getAsync, { coercionType: Office.CoercionType.Html });
-  } catch {}
+  // STRIP EMBEDDED IMAGE REFERENCES (cid:) from HTML
+  if (bodyHtml) {
+    bodyHtml = bodyHtml.replace(/<img[^>]+src="cid:[^"]*"[^>]*>/gi, '<!-- Image removed -->');
+  }
 
   // Get basic headers from item
   const subject = item.subject || "(No Subject)";
@@ -529,8 +560,30 @@ async function buildPseudoEml(item) {
   const date = item.dateTimeCreated ? new Date(item.dateTimeCreated).toUTCString() : new Date().toUTCString();
   const messageId = item.internetMessageId || `<${Date.now()}@outlook.com>`;
 
+  // FILTER OUT DUPLICATE HEADERS FROM TRANSPORT HEADERS
+  const forbiddenHeaders = [
+    'from:', 'to:', 'subject:', 'date:', 'message-id:',
+    'mime-version:', 'content-type:', 'content-transfer-encoding:'
+  ];
+  
+  let cleanHeaders = '';
+  if (transportHeaders && transportHeaders.trim()) {
+    cleanHeaders = transportHeaders
+      .split('\n')
+      .filter(line => {
+        const lower = line.toLowerCase().trim();
+        // Keep line if it doesn't start with any forbidden header
+        return !forbiddenHeaders.some(h => lower.startsWith(h));
+      })
+      .join('\n');
+    
+    // Remove "Attachments:" summary if present
+    if (cleanHeaders.includes("\nAttachments:\n")) {
+      cleanHeaders = cleanHeaders.split("\nAttachments:\n")[0];
+    }
+  }
+
   // Build proper RFC822 structure
-  // RFC822 REQUIRES these headers at the top:
   let eml = `From: ${from}
 To: ${to}
 Subject: ${subject}
@@ -538,16 +591,9 @@ Date: ${date}
 Message-ID: ${messageId}
 `;
 
-  // Add transport headers if available
-  if (transportHeaders && transportHeaders.trim()) {
-    let cleanHeaders = transportHeaders.trim();
-    
-    // Remove "Attachments:" summary if present
-    if (cleanHeaders.includes("\nAttachments:\n")) {
-      cleanHeaders = cleanHeaders.split("\nAttachments:\n")[0];
-    }
-    
-    eml += cleanHeaders + "\n";
+  // Add filtered transport headers
+  if (cleanHeaders.trim()) {
+    eml += cleanHeaders.trim() + '\n';
   }
 
   // Add MIME structure with body
@@ -557,15 +603,17 @@ Message-ID: ${messageId}
     eml += `MIME-Version: 1.0
 Content-Type: multipart/alternative; boundary="${boundary}"
 
---${boundary}
+`; // CRITICAL: blank line before body starts
+
+    eml += `--${boundary}
 Content-Type: text/plain; charset="utf-8"
-Content-Transfer-Encoding: quoted-printable
+Content-Transfer-Encoding: 7bit
 
 ${bodyText || ""}
 
 --${boundary}
 Content-Type: text/html; charset="utf-8"
-Content-Transfer-Encoding: quoted-printable
+Content-Transfer-Encoding: 7bit
 
 ${bodyHtml}
 
@@ -573,9 +621,11 @@ ${bodyHtml}
   } else {
     eml += `MIME-Version: 1.0
 Content-Type: text/plain; charset="utf-8"
-Content-Transfer-Encoding: quoted-printable
+Content-Transfer-Encoding: 7bit
 
-${bodyText || ""}`;
+`; // CRITICAL: blank line before body
+
+    eml += `${bodyText || ""}`;
   }
 
   return eml;
@@ -601,3 +651,57 @@ function getAsyncProm(item, method, opts) {
     });
   });
 }
+
+/* =====================================================================
+   TEMP DEBUG EML BUILDER (DELETE AFTER TESTING)
+   This section adds a debug button that shows the COMPLETE EML
+   that will be sent to Sublime API.
+===================================================================== */
+
+Office.onReady(() => {
+  const debugBtn = document.getElementById("debugExtractBtn");
+  if (!debugBtn) return;
+
+  debugBtn.addEventListener("click", debugShowEML);
+});
+
+async function debugShowEML() {
+  const item = Office.context.mailbox.item;
+  const outputBox = document.getElementById("debugOutput");
+  const outputText = document.getElementById("debugText");
+
+  if (!item) {
+    outputText.textContent = "No email selected.";
+    outputBox.classList.remove("hidden");
+    return;
+  }
+
+  outputText.textContent = "Building EML...\n";
+  outputBox.classList.remove("hidden");
+
+  try {
+    // 🔨 Build the EXACT EML that will be sent
+    const eml = await buildPseudoEml(item);
+
+    // 🧪 Display the complete EML structure
+    outputText.textContent =
+`===== COMPLETE EML STRUCTURE =====
+Total Length: ${eml.length} characters
+
+${eml}
+
+===== END OF EML =====
+
+📋 Copy this output to verify:
+- Blank line exists after headers?
+- MIME boundaries match?
+- Content-Transfer-Encoding correct?
+- No duplicate headers?`;
+
+  } catch (err) {
+    outputText.textContent = "EML build failed:\n" + err.message + "\n\n" + err.stack;
+    console.error("Debug EML error:", err);
+  }
+}
+
+/* ================= END TEMP DEBUG EML BUILDER ================= */
