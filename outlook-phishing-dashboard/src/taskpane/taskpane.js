@@ -534,101 +534,43 @@ async function getBodyWithRetry(item, coercionType, retries = 3, delay = 300) {
 }
 
 async function buildPseudoEml(item) {
-  // Get transport headers from Outlook (Received, Authentication-Results, etc.)
-  let transportHeaders = "";
-  try {
-    if (typeof item.getAllInternetHeadersAsync === "function") {
-      transportHeaders = await getAsyncProm(item, item.getAllInternetHeadersAsync, {});
-    }
-  } catch (err) {
-    console.warn("Could not get transport headers:", err);
-  }
-
-  // Get email body in both formats
   const bodyText = await getBodyWithRetry(item, Office.CoercionType.Text);
-  let bodyHtml = await getBodyWithRetry(item, Office.CoercionType.Html);
-
-  // STRIP EMBEDDED IMAGE REFERENCES (cid:) from HTML
-  if (bodyHtml) {
-    bodyHtml = bodyHtml.replace(/<img[^>]+src="cid:[^"]*"[^>]*>/gi, '<!-- Image removed -->');
-  }
-
-  // Get basic headers from item
-  const subject = item.subject || "(No Subject)";
-  const from = item.from?.emailAddress || item.from?.displayName || "unknown@unknown.com";
-  const to = (item.to || []).map(x => x.emailAddress || x.displayName).join(", ") || "undisclosed-recipients";
-  const date = item.dateTimeCreated ? new Date(item.dateTimeCreated).toUTCString() : new Date().toUTCString();
-  const messageId = item.internetMessageId || `<${Date.now()}@outlook.com>`;
-
-  // FILTER OUT DUPLICATE HEADERS FROM TRANSPORT HEADERS
-  const forbiddenHeaders = [
-    'from:', 'to:', 'subject:', 'date:', 'message-id:',
-    'mime-version:', 'content-type:', 'content-transfer-encoding:'
-  ];
   
-  let cleanHeaders = '';
-  if (transportHeaders && transportHeaders.trim()) {
-    cleanHeaders = transportHeaders
-      .split('\n')
-      .filter(line => {
-        const lower = line.toLowerCase().trim();
-        // Keep line if it doesn't start with any forbidden header
-        return !forbiddenHeaders.some(h => lower.startsWith(h));
-      })
-      .join('\n');
-    
-    // Remove "Attachments:" summary if present
-    if (cleanHeaders.includes("\nAttachments:\n")) {
-      cleanHeaders = cleanHeaders.split("\nAttachments:\n")[0];
-    }
-  }
+  const subject = item.subject || "(No Subject)";
+  const from = item.from?.emailAddress || "unknown@unknown.com";
+  const to = (item.to || []).map(x => x.emailAddress).filter(Boolean).join(", ") || "undisclosed";
+  const date = new Date().toUTCString();
+  const messageId = `<${Date.now()}@outlook.com>`;
 
-  // Build proper RFC822 structure
-  let eml = `From: ${from}
+  // Minimal RFC822 - no multipart, no base64, just plain text
+  return `From: ${from}
 To: ${to}
 Subject: ${subject}
 Date: ${date}
 Message-ID: ${messageId}
-`;
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
 
-  // Add filtered transport headers
-  if (cleanHeaders.trim()) {
-    eml += cleanHeaders.trim() + '\n';
-  }
+${bodyText || ""}`;
+}
 
-  // Add MIME structure with body
-  const boundary = "----=_NextPart_" + Date.now().toString(36);
+// Add this helper function for quoted-printable encoding
+function encodeQuotedPrintable(text) {
+  if (!text) return "";
   
-  if (bodyHtml && bodyHtml.trim()) {
-    eml += `MIME-Version: 1.0
-Content-Type: multipart/alternative; boundary="${boundary}"
-
-`; // CRITICAL: blank line before body starts
-
-    eml += `--${boundary}
-Content-Type: text/plain; charset="utf-8"
-Content-Transfer-Encoding: 7bit
-
-${bodyText || ""}
-
---${boundary}
-Content-Type: text/html; charset="utf-8"
-Content-Transfer-Encoding: 7bit
-
-${bodyHtml}
-
---${boundary}--`;
-  } else {
-    eml += `MIME-Version: 1.0
-Content-Type: text/plain; charset="utf-8"
-Content-Transfer-Encoding: 7bit
-
-`; // CRITICAL: blank line before body
-
-    eml += `${bodyText || ""}`;
-  }
-
-  return eml;
+  // Simple quoted-printable encoding: encode non-ASCII and special chars
+  return text
+    .split('')
+    .map(char => {
+      const code = char.charCodeAt(0);
+      // Encode non-ASCII (>127) and special characters
+      if (code > 127 || char === '=' || code < 32 && char !== '\n' && char !== '\r' && char !== '\t') {
+        return '=' + code.toString(16).toUpperCase().padStart(2, '0');
+      }
+      return char;
+    })
+    .join('');
 }
 
 // ================= ATTACHMENTS =================

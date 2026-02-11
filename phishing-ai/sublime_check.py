@@ -1,5 +1,4 @@
 import requests
-import base64
 import logging
 from typing import Dict, Any, Optional
 
@@ -23,21 +22,14 @@ def sublime_attack_score(
     Returns the raw JSON response from Sublime.
     
     Args:
-        raw_message_rfc822: Either base64-encoded or plain RFC822 email text
+        raw_message_rfc822: Plain text RFC822 email (already decoded)
     """
     
-    # Decode if base64-encoded
-    try:
-        # Try to decode as base64
-        decoded = base64.b64decode(raw_message_rfc822).decode('utf-8')
-        email_text = decoded
-        logger.info("Decoded base64-encoded email for Sublime API")
-    except Exception:
-        # If decoding fails, assume it's already plain text
-        email_text = raw_message_rfc822
-        logger.info("Using plain text email for Sublime API")
+    # The email is already decoded plain text - use it directly
+    payload = {"raw_message": raw_message_rfc822}
     
-    payload = {"raw_message": email_text}
+    # Debug: Log first 500 chars to verify it's plain text
+    logger.info(f"Sending to Sublime (first 500 chars): {raw_message_rfc822[:500]}")
 
     resp = requests.post(
         SUBLIME_ATTACK_SCORE_URL,
@@ -48,6 +40,7 @@ def sublime_attack_score(
 
     # Minimal + predictable error handling
     if raise_for_http_errors and resp.status_code >= 400:
+        logger.error(f"Sublime API error response: {resp.text[:500]}")
         raise RuntimeError(f"Sublime attack_score failed [{resp.status_code}]: {resp.text[:300]}")
 
     # Some endpoints might return non-json errors; handle gracefully

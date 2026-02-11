@@ -678,12 +678,12 @@ class DetectionPipeline:
     def check_sublime_security(self, email_data: Dict) -> CheckResult:
         """Run Sublime Security attack score API."""
         try:
-            # Sublime API requires base64-encoded RFC822 message
+            # email_data["raw"] is already decoded plain text RFC822
             raw = email_data["raw"]
-
-            encoded_email = base64.b64encode(raw.encode()).decode()
+            
+            # DO NOT base64 encode again - Sublime expects plain RFC822 text in JSON
             result = sublime_attack_score(
-                encoded_email,
+                raw,  # Send as-is, it's already plain text
                 timeout_s=20,
                 raise_for_http_errors=False
             )
