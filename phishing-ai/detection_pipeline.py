@@ -409,31 +409,47 @@ class DetectionPipeline:
     # --- Individual Check Methods ---
 
     def check_bert_model(self, email_data: Dict) -> CheckResult:
-        """Run HuggingFace BERT phishing model."""
+        """Run HuggingFace BERT phishing model on email body text only."""
         try:
             model = self._get_phish_model()
-            
-            # Use full_text which contains all headers and email metadata
-            # The model was trained on complete email format, not just From/Subject/Body
-            text = email_data["full_text"][:2048]  # Truncate for model
+
+            body = (email_data.get("body_text") or "").strip()
+
+            # If body_text is empty but HTML exists, strip HTML to text as fallback
+            # (still "body", not headers)
+            if not body and email_data.get("body_html"):
+                html = email_data.get("body_html", "")
+                body = re.sub(r"<[^>]+>", " ", html)
+                body = re.sub(r"\s+", " ", body).strip()
+
+            if not body:
+                return CheckResult(
+                    name="bert_model",
+                    passed=True,
+                    score=0,
+                    details={"skipped": True, "reason": "No email body"}
+                )
+
+            # Keep a generous cap for long emails
+            text = body[:4000]
 
             result = model(text)[0]
-            # LABEL_0 = legit, LABEL_1 = phishing
             is_phishing = result["label"] == "LABEL_1"
-            confidence = result["score"] * 100  # Raw confidence in prediction
+            confidence = result["score"] * 100
 
-            # For aggregation, we need a "phishing likelihood" score
-            # But ai_score will show the raw confidence
+            # “phishing likelihood” score used for aggregation
             phishing_score = confidence if is_phishing else (100 - confidence)
 
             return CheckResult(
                 name="bert_model",
-                score=phishing_score,  # Used for weighted aggregation
+                score=phishing_score,
                 passed=not is_phishing,
                 details={
                     "label": result["label"],
-                    "confidence": confidence,  # Raw BERT confidence (shown as ai_score)
-                    "is_phishing": is_phishing
+                    "confidence": confidence,   # raw model confidence
+                    "is_phishing": is_phishing,
+                    "scanned": "body_only",
+                    "chars_used": len(text),
                 }
             )
         except Exception as e:

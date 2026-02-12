@@ -1,5 +1,5 @@
 // ================= CONFIG =================
-const API_BASE = "http://localhost:5000";
+const API_BASE = "https://majorproject-production-a975.up.railway.app";
 const POLL_INTERVAL = 500; // Check every 500ms for item changes
 
 // ================= STATE =================
@@ -154,7 +154,10 @@ function setScoreUI(id, score) {
   const verdictText = document.getElementById("verdict")?.textContent;
 
   el.classList.remove("green", "orange", "red", "neutral");
-  el.classList.add(colorClassForConfidence(v, verdictText));
+  if (id === "sublimeScore") {
+  el.classList.add(colorClassForSublime(v));} 
+  else {
+  el.classList.add(colorClassForConfidence(v, verdictText));}
 }
 
 function setReasonsUI(reasons, indicators) {
@@ -206,6 +209,15 @@ function colorClassForVerdict(v) {
   if (s.includes("safe") || s.includes("legit")) return "green";
   return "neutral";
 }
+
+function colorClassForSublime(score) {
+  // Sublime: LOWER = better
+
+  if (score < 40) return "green";     // Safe
+  if (score < 70) return "orange";    // Suspicious
+  return "red";                       // High risk
+}
+
 
 function setQuarantineVisibility(verdict) {
   const section = document.getElementById("quarantineSection");
