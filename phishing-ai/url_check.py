@@ -13,7 +13,7 @@ def urlscan_check_url(
     *,
     api_key: Optional[str] = None,
     visibility: str = "public",   # use "private" if you have enterprise + want private scans
-    timeout_s: int = 20,
+    timeout_s: int = 15,
     poll_interval_s: float = 1.5,
 ) -> Dict[str, Any]:
     """
