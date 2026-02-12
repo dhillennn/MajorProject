@@ -247,7 +247,8 @@ def send_teams_notification(subject: str, sender:str, verdict: str, confidence: 
         }
 
         resp = requests.post(Config.TEAMS_WEBHOOK_URL, json=card, timeout=10)
-        return resp.status_code == 200
+        logger.info(f"[TEAMS] status={resp.status_code} body={resp.text[:300]}")
+        return 200 <= resp.status_code < 300
     except Exception as e:
         logger.error(f"Teams notification failed: {e}")
         return False
@@ -506,7 +507,7 @@ def report_phishing():
         POST /report
         Content-Type: application/json
         {
-            "eml": "<raw email content>",
+            "scan_id": "<the scan_id from /check>",
             "reporter": "user@example.com" (optional)
         }
 
@@ -522,52 +523,90 @@ def report_phishing():
     """
     try:
         data = request.get_json(force=True)
-        eml = data.get("eml", "").strip()
-        reporter = data.get("reporter", None)
+        reporter = None
 
-        # Validate input
-        try:
-            eml = validate_eml_input(eml)
-        except ValidationError as e:
-            return jsonify({"error": str(e)}), 400
+        # Prefer scan_id: no rescanning
+        scan_id = data.get("scan_id")
+        if scan_id:
+            scan = db.get_scan_by_id(scan_id)
+            if not scan:
+                return jsonify({"error": "Invalid scan_id"}), 400
 
-        # Run detection to get verdict info
-        pipeline = get_pipeline()
-        result: PipelineResult = pipeline.run(eml)
+            subject = (scan.get("email_subject") or "No Subject")
+            sender  = (scan.get("email_from") or "Unknown")
+            confidence = float(scan.get("confidence") or 0)
+            verdict = scan.get("verdict") or "SUSPICIOUS"
+            email_hash = scan.get("email_hash")
 
-        # Parse email to get subject
-        email_data = pipeline.parse_email(eml)
-        subject = email_data.get("subject", "No Subject")
-        email_hash = compute_email_hash(eml)
-        sender = email_data.get("from_addr", "Unknown")
+        else:
+            # Backward compatibility: accept eml if scan_id not provided
+            eml = (data.get("eml", "") or "").strip()
+            try:
+                eml = validate_eml_input(eml)
+            except ValidationError as e:
+                return jsonify({"error": str(e)}), 400
 
-        # Send notifications
+            email_hash = compute_email_hash(eml)
+
+            # Try reuse latest scan by hash to avoid rescanning
+            cached_scan = db.get_scan_by_hash(email_hash)
+            if cached_scan:
+                verdict = cached_scan["verdict"]
+                confidence = float(cached_scan["confidence"])
+                subject = (cached_scan.get("email_subject") or "No Subject")
+                sender = (cached_scan.get("email_from") or "Unknown")
+                scan_id = str(cached_scan["id"])
+            else:
+                # Last resort: only if no prior scan exists
+                pipeline = get_pipeline()
+                result: PipelineResult = pipeline.run(eml)
+                email_data = pipeline.parse_email(eml)
+                subject = email_data.get("subject", "No Subject")
+                sender = email_data.get("from_addr", "Unknown")
+                verdict = result.verdict
+                confidence = result.confidence
+
+                scan_id = db.save_scan(
+                    email_hash=email_hash,
+                    verdict=verdict,
+                    confidence=confidence,
+                    ai_score=result.ai_score,
+                    sublime_score=result.sublime_score,
+                    reasons=result.reasons,
+                    indicators=result.indicators,
+                    check_results=result.check_results,
+                    email_subject=subject,
+                    email_from=sender,
+                    email_body=eml,
+                    ip_address=request.remote_addr
+                )
+
+        # Send notifications using existing scan info
         notifications = {
-            "teams": send_teams_notification(subject, sender, result.verdict, result.confidence, reporter),
-            "telegram": send_telegram_notification(subject, sender, result.verdict, result.confidence, reporter),
-            "whatsapp": send_whatsapp_notification(subject, sender, result.verdict, result.confidence, reporter)
+            "teams": send_teams_notification(subject, sender, verdict, confidence, reporter),
+            "telegram": send_telegram_notification(subject, sender, verdict, confidence, reporter),
+            "whatsapp": send_whatsapp_notification(subject, sender, verdict, confidence, reporter)
         }
-
         any_sent = any(notifications.values())
 
-        # Save report to database
+        # Log report (linked to scan_id)
         report_id = db.save_report(
             email_hash=email_hash,
-            verdict=result.verdict,
-            confidence=result.confidence,
+            verdict=verdict,
+            confidence=confidence,
+            scan_id=scan_id,
             reporter_email=reporter,
             teams_notified=notifications["teams"],
             telegram_notified=notifications["telegram"],
             whatsapp_notified=notifications["whatsapp"]
         )
 
-        logger.info(f"Report submitted: subject='{subject[:50]}', verdict={result.verdict}, "
-                   f"notifications={notifications}")
+        logger.info(f"Report submitted: subject='{subject[:50]}', verdict={verdict}, notifications={notifications}")
 
         return jsonify({
             "success": True,
-            "verdict": result.verdict,
-            "confidence": result.confidence,
+            "verdict": verdict,
+            "confidence": confidence,
             "notifications": notifications,
             "any_notification_sent": any_sent,
             "report_id": report_id

@@ -9,6 +9,7 @@ let activeScanItemId = null;
 let listenersAttached = false;
 let itemChangedHooked = false;
 let pollTimer = null;
+let lastScanId = null;
 
 // ================= INIT =================
 Office.onReady(() => {
@@ -309,6 +310,8 @@ async function scanCurrentEmail() {
     if (!res.ok) throw new Error(`Analyze failed (${res.status})`);
     const data = await res.json();
 
+    lastScanId = data.scan_id;
+
     // Email changed mid-scan → discard
     if (activeScanItemId !== emailSignature) {
       console.log("Email changed during scan, discarding results");
@@ -348,16 +351,28 @@ async function reportCurrentEmail() {
   setStatus("Reporting...");
 
   try {
-    const eml = await getEmlFromItem(item);
-    const attachments = await getAttachmentsMetadata(item);
+    // Ensure email was scanned first
+    if (!lastScanId) {
+      setStatus("Please scan the email before reporting.");
+      disableReport(false);
+      return;
+    }
 
     const res = await fetch(`${API_BASE}/report`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ eml, attachments })
+      body: JSON.stringify({
+        scan_id: lastScanId,
+        reporter: Office.context.mailbox.userProfile?.emailAddress || null
+      })
     });
 
     if (!res.ok) throw new Error(`Report failed (${res.status})`);
+
+    const data = await res.json();
+
+    console.log("Report result:", data);
+
     setStatus("Reported successfully.");
   } catch (err) {
     console.error(err);

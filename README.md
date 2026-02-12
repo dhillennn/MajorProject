@@ -21,29 +21,39 @@ A production-ready phishing detection system that integrates directly with Micro
 ```
 ┌─────────────────────────────────┐         HTTPS          ┌─────────────────────────────────────┐
 │   Outlook Add-in (Taskpane)     │ ──────────────────────►│          Flask Backend              │
-│                                 │    Cloudflare Tunnel   │                                     │
+│                                 │                        │                                     │
 │   - Scan Email button           │                        │   ┌─────────────────────────────┐   │
 │   - Auto-scan mode              │    POST /check         │   │   Parallel Detection        │   │
 │   - Quarantine button           │◄──────────────────────┐│   │                             │   │
-│   - Report Phishing button      │   {verdict, scores,   ││   │  1. BERT Model (55%)        │   │
-│   - Verdict display             │    reasons, indicators}││  │  2. Sublime Security (15%)  │   │
+│   - Report Phishing button      │   {verdict, scores,   ││   │  1. BERT Model (50%)        │   │
+│   - Verdict display             │    reasons, indicators}││  │  2. Sublime Security (20%)  │   │
 │                                 │                        ││  │  3. HTML Threats (2%)       │   │
 └─────────────────────────────────┘                        ││  │  4. Header Mismatch (3%)    │   │
                                                            ││  │  5. Urgency Keywords (8%)   │   │
-                                                           ││  │  6. URLScan.io (5%)         │   │
-                                                           ││  │  7. URL Shorteners (3%)     │   │
-                                                           ││  │  8. Suspicious TLDs (2%)    │   │
-                                                           ││  │  9. DNS Records (1%)        │   │
-                                                           ││  │  10. VirusTotal (4%)        │   │
-                                                           ││  │  11. SPF Record (1%)        │   │
-                                                           ││  │  12. Domain Age (1%)        │   │
-                                                           ││  │                             │   │
-                                                           ││  │  + Gemini AI Reasoning      │   │
-                                                           ││  └─────────────────────────────┘   │
-                                                           │└─────────────────────────────────────┘
-                                                           │
-                                 POST /report              │  ──► Teams Webhook
-                                 {eml, reporter}           └──► Telegram Bot
+┌─────────────────────────────────┐                        ││  │  6. URLScan.io (5%)         │   │
+│      Admin Dashboard (Web)      │         HTTPS          ││  │  7. URL Shorteners (3%)     │   │
+│                                 │ ──────────────────────►││  │  8. Suspicious TLDs (2%)    │   │
+│   - Scan History & Analytics    │    GET /admin          ││  │  9. DNS Records (1%)        │   │
+│   - Verdict Distribution Charts │    GET /admin/scans    ││  │  10. VirusTotal (4%)        │   │
+│   - Email Route Visualization   │    GET /admin/reports  ││  │  11. SPF Record (1%)        │   │
+│   - Phishing Reports Review     │                        ││  │  12. Domain Age (1%)        │   │
+│   - Audit Log Monitoring        │                        ││  │                             │   │
+│                                 │                        ││  │  + Gemini AI Reasoning      │   │
+└─────────────────────────────────┘                        ││  └─────────────────────────────┘   │
+                                                           ││                                    │
+                                                           ││   ┌─────────────────────────────┐  │
+                                 POST /report              ││   │      PostgreSQL DB          │  │
+                                 {eml, reporter}           │└──►│  - scans                    │  │
+                                                           │    │  - phishing_reports         │  │
+                                                           │    │  - audit_log                │  │
+                                                           │    │  - api_keys                 │  │
+                                                           │    └─────────────────────────────┘  │
+                                                           │                                     │
+                                                           ├──► Teams Webhook                    │
+                                                           ├──► Telegram Bot                     │
+                                                                                                 │
+                                                                                                 │
+                                                           └─────────────────────────────────────┘
 ```
 
 ## Quick Start
