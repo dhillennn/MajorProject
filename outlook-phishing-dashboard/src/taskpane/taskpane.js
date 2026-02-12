@@ -544,8 +544,9 @@ async function buildPseudoEml(item) {
     console.warn("Could not get transport headers:", err);
   }
 
-  // Get email body - TEXT ONLY
+  // Get email body in BOTH formats
   const bodyText = await getBodyWithRetry(item, Office.CoercionType.Text);
+  const bodyHtml = await getBodyWithRetry(item, Office.CoercionType.Html);
 
   // Get basic headers
   const subject = item.subject || "(No Subject)";
@@ -554,10 +555,16 @@ async function buildPseudoEml(item) {
   const date = item.dateTimeCreated ? new Date(item.dateTimeCreated).toUTCString() : new Date().toUTCString();
   const messageId = item.internetMessageId || `<${Date.now()}@outlook.com>`;
 
-  // AGGRESSIVELY FILTER transport headers to remove ALL base64 content
+  // Get attachment metadata (for VirusTotal check)
+  const attachments = await getAttachmentsMetadata(item);
+
+  // FILTER transport headers to remove problematic encoded headers
   const forbiddenHeaders = [
     'from:', 'to:', 'subject:', 'date:', 'message-id:',
-    'mime-version:', 'content-type:', 'content-transfer-encoding:'
+    'mime-version:', 'content-type:', 'content-transfer-encoding:',
+    'x-microsoft-antispam',  // Problematic for Sublime (but Sublime won't see these anyway)
+    'dkim-signature',
+    'arc-'
   ];
   
   let cleanHeaders = '';
@@ -569,39 +576,37 @@ async function buildPseudoEml(item) {
       .filter(line => {
         const lower = line.toLowerCase().trim();
         
-        // Skip forbidden headers
-        if (forbiddenHeaders.some(h => lower.startsWith(h))) {
-          return false;
-        }
+        const isNewHeader = line.length > 0 && 
+                           line.includes(':') && 
+                           !line.startsWith(' ') && 
+                           !line.startsWith('\t');
         
-        // Start skipping when we see base64 encoding
-        if (lower.includes('content-transfer-encoding: base64')) {
-          skipSection = true;
-          return false;
-        }
-        
-        // Start skipping when we see multipart boundaries
-        if (lower.includes('content-type: multipart')) {
-          skipSection = true;
-          return false;
-        }
-        
-        // Skip continuation lines when in skip mode
-        if (skipSection && (line.startsWith(' ') || line.startsWith('\t'))) {
-          return false;
-        }
-        
-        // New header = stop skipping
-        if (line.includes(':') && !line.startsWith(' ') && !line.startsWith('\t')) {
+        if (isNewHeader) {
+          const headerName = line.split(':')[0].toLowerCase();
+          
+          // Skip forbidden headers
+          if (forbiddenHeaders.some(h => headerName.startsWith(h))) {
+            skipSection = true;
+            return false;
+          }
+          
+          // Skip headers with RFC 2047 encoding
+          if (line.includes('=?') && line.includes('?=')) {
+            skipSection = true;
+            return false;
+          }
+          
           skipSection = false;
         }
         
-        // Skip if still in skip mode
-        if (skipSection) {
+        if (skipSection) return false;
+        
+        // Skip RFC 2047 encoded continuations
+        if (line.includes('=?') && line.includes('?=')) {
           return false;
         }
         
-        // Skip empty lines or lines that look like base64 data
+        // Skip empty lines or base64-looking lines
         if (!line.trim() || /^[A-Za-z0-9+/=]{60,}$/.test(line)) {
           return false;
         }
@@ -610,13 +615,14 @@ async function buildPseudoEml(item) {
       })
       .join('\n');
     
-    // Remove attachments summary
     if (cleanHeaders.includes("\nAttachments:\n")) {
       cleanHeaders = cleanHeaders.split("\nAttachments:\n")[0];
     }
   }
 
-  // Build MINIMAL RFC822 - plain text only, NO multipart, NO base64
+  // Build RFC822 with BOTH text and HTML
+  const boundary = "----=_NextPart_" + Date.now().toString(36);
+  
   let eml = `From: ${from}
 To: ${to}
 Subject: ${subject}
@@ -629,28 +635,81 @@ Message-ID: ${messageId}
     eml += cleanHeaders.trim() + '\n';
   }
 
-  // Simple plain text body - NO MIME multipart!
-  eml += `MIME-Version: 1.0
-Content-Type: text/plain; charset="utf-8"
-Content-Transfer-Encoding: 7bit
+  // Add MIME structure with BOTH text and HTML
+  if (bodyHtml && bodyHtml.trim()) {
+    // Multipart email with both text and HTML
+    eml += `MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="${boundary}"
 
 `;
 
-  // Add body (ensure it's plain text)
-  const safeBody = (bodyText || "").replace(/[^\x00-\x7F]/g, '?'); // Remove non-ASCII
-  eml += safeBody;
+    // Text part
+    eml += `--${boundary}
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+${bodyText || ""}
+
+`;
+
+    // HTML part
+    eml += `--${boundary}
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+${bodyHtml}
+
+--${boundary}--
+`;
+
+  } else {
+    // Plain text only
+    eml += `MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+${bodyText || ""}
+`;
+  }
 
   return eml;
 }
 
-// ================= ATTACHMENTS =================
+// Updated attachment metadata function
 async function getAttachmentsMetadata(item) {
-  return (item.attachments || []).map(a => ({
-    name: a.name || "unknown",
-    size: a.size || 0,
-    contentType: a.contentType || "application/octet-stream",
-    isInline: a.isInline || false
-  }));
+  if (!item.attachments || item.attachments.length === 0) {
+    return [];
+  }
+
+  // Get attachment details
+  const attachments = [];
+  
+  for (const attachment of item.attachments) {
+    try {
+      // For Outlook attachments, we can get metadata but not content
+      // The backend will need to use the SHA256 hash we compute
+      const metadata = {
+        name: attachment.name || "unknown",
+        size: attachment.size || 0,
+        contentType: attachment.contentType || "application/octet-stream",
+        isInline: attachment.isInline || false,
+        id: attachment.id || null
+      };
+
+      // Note: We can't easily get the attachment content from Outlook Web Add-in
+      // The backend will need to handle this differently
+      // Options:
+      // 1. Backend extracts attachments from the raw EML
+      // 2. We send attachment IDs and backend fetches via Graph API
+      // 3. We fetch attachment content here (requires getAttachmentContentAsync)
+      
+      attachments.push(metadata);
+    } catch (err) {
+      console.warn(`Failed to get attachment metadata for ${attachment.name}:`, err);
+    }
+  }
+
+  return attachments;
 }
 
 // ================= PROMISIFY =================

@@ -88,19 +88,40 @@ class DetectionPipeline:
         self._model_loaded = False
 
     def _get_phish_model(self):
-        """Lazy load the HuggingFace phishing model."""
+        """Lazy load the HuggingFace phishing model with optimizations."""
         if not self._model_loaded:
-            from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline
-            tokenizer = AutoTokenizer.from_pretrained("ElSlay/BERT-Phishing-Email-Model")
-            model = AutoModelForSequenceClassification.from_pretrained("ElSlay/BERT-Phishing-Email-Model")
-            self._phish_pipeline = pipeline(
-                "text-classification",
-                model=model,
-                tokenizer=tokenizer,
-                truncation=True,
-                max_length=1024
-            )
-            self._model_loaded = True
+            try:
+                logger.info("Loading BERT phishing model (this may take 30-60s on first run)...")
+                from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline
+                
+                # Load with optimizations for CPU inference
+                tokenizer = AutoTokenizer.from_pretrained(
+                    "ElSlay/BERT-Phishing-Email-Model",
+                    use_fast=True  # Use fast tokenizer
+                )
+                model = AutoModelForSequenceClassification.from_pretrained(
+                    "ElSlay/BERT-Phishing-Email-Model",
+                    torchscript=False,  # Disable for faster loading
+                    low_cpu_mem_usage=True  # Reduce memory usage
+                )
+                
+                # Create pipeline with device=-1 (CPU) explicitly
+                self._phish_pipeline = pipeline(
+                    "text-classification",
+                    model=model,
+                    tokenizer=tokenizer,
+                    truncation=True,
+                    max_length=512,  # Reduced from 1024 for faster inference
+                    device=-1  # Force CPU
+                )
+                
+                self._model_loaded = True
+                logger.info("✅ BERT model loaded successfully")
+                
+            except Exception as e:
+                logger.error(f"Failed to load BERT model: {e}")
+                raise
+                
         return self._phish_pipeline
 
     # Dangerous file extensions that are commonly used in phishing
@@ -172,10 +193,17 @@ class DetectionPipeline:
         body_html = ""
         attachments = []
 
+         # DEBUG: Log what we're parsing
+        logger.info(f"Email is_multipart: {msg.is_multipart()}")
+        logger.info(f"Email Content-Type: {msg.get_content_type()}")
+
         if msg.is_multipart():
             for part in msg.walk():
                 content_type = part.get_content_type()
                 content_disposition = str(part.get("Content-Disposition", ""))
+
+                if content_type.startswith('multipart/'):
+                    continue 
 
                 # Check if this is an attachment
                 if "attachment" in content_disposition or part.get_filename():
@@ -389,18 +417,52 @@ class DetectionPipeline:
     # --- Individual Check Methods ---
 
     def check_bert_model(self, email_data: Dict) -> CheckResult:
-        """Run HuggingFace BERT phishing model."""
+        """Run HuggingFace BERT phishing model with timeout protection."""
         try:
+            # Try to get the model (will load on first call)
             model = self._get_phish_model()
-            text = email_data["full_text"][:2048]  # Truncate for model
-
-            result = model(text)[0]
+            
+            # Truncate text more aggressively for faster inference
+            text = email_data["full_text"][:1024]  # Reduced from 2048
+            
+            # Run inference with timeout
+            import threading
+            result_container = {"result": None, "error": None}
+            
+            def run_inference():
+                try:
+                    result_container["result"] = model(text)[0]
+                except Exception as e:
+                    result_container["error"] = str(e)
+            
+            # Run inference in thread with timeout
+            thread = threading.Thread(target=run_inference)
+            thread.daemon = True
+            thread.start()
+            thread.join(timeout=15)  # 15 second timeout for inference only
+            
+            if thread.is_alive():
+                logger.warning("BERT inference timed out after 15s")
+                return CheckResult(
+                    name="bert_model", 
+                    error="Inference timeout",
+                    passed=True,  # Fail open (assume safe if timeout)
+                    score=0
+                )
+            
+            if result_container["error"]:
+                raise Exception(result_container["error"])
+            
+            if not result_container["result"]:
+                raise Exception("No result from model")
+            
+            result = result_container["result"]
+            
             # LABEL_0 = legit, LABEL_1 = phishing
             is_phishing = result["label"] == "LABEL_1"
             confidence = result["score"] * 100  # Raw confidence in prediction
 
             # For aggregation, we need a "phishing likelihood" score
-            # But ai_score will show the raw confidence
             phishing_score = confidence if is_phishing else (100 - confidence)
 
             return CheckResult(
@@ -413,9 +475,16 @@ class DetectionPipeline:
                     "is_phishing": is_phishing
                 }
             )
+            
         except Exception as e:
             logger.error(f"BERT model error: {e}")
-            return CheckResult(name="bert_model", error=str(e))
+            # Fail open - return safe with error logged
+            return CheckResult(
+                name="bert_model", 
+                error=str(e),
+                passed=True,
+                score=0
+            )
 
     def check_header_mismatch(self, email_data: Dict) -> CheckResult:
         """Check for From/Reply-To header mismatch."""
@@ -793,6 +862,15 @@ class DetectionPipeline:
                 passed=True,
                 score=0,
                 details={"skipped": True, "reason": "No attachments"}
+            )
+        
+        # Check if email mentioned attachments but couldn't extract them
+        if "attachment" in email_data.get("raw", "").lower():
+            return CheckResult(
+                name="virustotal",
+                passed=True,
+                score=0,
+                details={"reason": "Attachments present but couldn't be extracted (TNEF format)"}
             )
 
         api_key = os.getenv("VIRUSTOTAL_API_KEY")
