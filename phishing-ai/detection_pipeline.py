@@ -78,7 +78,7 @@ class DetectionPipeline:
     SUSPICIOUS_TLDS = ['.xyz', '.top', '.club', '.work', '.click',
                        '.loan', '.win', '.gq', '.ml', '.ga', '.cf']
 
-    def __init__(self, timeout_seconds: int = 30, max_workers: int = 8):
+    def __init__(self, timeout_seconds: int = 60, max_workers: int = 4):
         self.timeout = timeout_seconds
         self.max_workers = max_workers
         self._executor = None
