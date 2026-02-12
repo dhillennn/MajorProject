@@ -105,7 +105,6 @@ class DetectionPipeline:
                 tokenizer=tokenizer,
                 truncation=True,
                 max_length=512  # BERT's maximum token limit
-                # Removed padding="max_length" - it caused distribution shift and hurt accuracy
             )
             self._model_loaded = True
             logger.info("BERT phishing model loaded successfully")
@@ -123,7 +122,6 @@ class DetectionPipeline:
     def parse_email(self, raw_email: str) -> Dict[str, Any]:
         """Parse raw email or EML content into structured data including attachments."""
         # Handle base64-encoded EML from taskpane
-        # CHANGE 4: Log decode failures instead of silently swallowing them
         if raw_email.startswith("__BASE64_EML__:"):
             try:
                 b64_data = raw_email.split(":", 1)[1]
@@ -188,12 +186,6 @@ class DetectionPipeline:
                 content_type = part.get_content_type()
                 content_disposition = str(part.get("Content-Disposition", ""))
 
-                # CHANGE 5: Explicitly skip multipart container parts.
-                # msg.walk() yields the container itself before its children. These parts
-                # have no payload of their own and no filename, so they would silently
-                # fall through all branches below and do nothing — but making it explicit
-                # prevents any edge case where a malformed container has an unexpected
-                # filename and gets misrouted into _extract_attachment.
                 if content_type in ("multipart/alternative", "multipart/mixed", "multipart/related"):
                     continue
 
@@ -750,12 +742,6 @@ class DetectionPipeline:
         try:
             # Build a CLEAN email from scratch using parsed data
             clean_email = self._build_clean_email_for_sublime(email_data)
-            
-            logger.info("="*80)
-            logger.info("CLEAN EMAIL BEING SENT TO SUBLIME:")
-            logger.info("="*80)
-            logger.info(clean_email)
-            logger.info("="*80)
             
             result = sublime_attack_score(
                 clean_email,

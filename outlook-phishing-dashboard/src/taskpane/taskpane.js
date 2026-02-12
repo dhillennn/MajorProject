@@ -309,7 +309,7 @@ async function scanCurrentEmail() {
     if (!res.ok) throw new Error(`Analyze failed (${res.status})`);
     const data = await res.json();
 
-    // 🚨 Email changed mid-scan → discard
+    // Email changed mid-scan → discard
     if (activeScanItemId !== emailSignature) {
       console.log("Email changed during scan, discarding results");
       return;
@@ -506,12 +506,6 @@ function getAccessToken() {
 async function getEmlFromItem(item) {
   try {
     const pseudo = await buildPseudoEml(item);
-    // CHANGE 1: Use TextEncoder for Unicode-safe base64 encoding.
-    // The previous btoa(unescape(encodeURIComponent(...))) approach silently corrupts
-    // or truncates strings containing Unicode characters (curly quotes, em-dashes,
-    // non-breaking spaces, etc.) that are common in HTML email bodies from Outlook.
-    // TextEncoder converts the full string to a proper UTF-8 byte array first,
-    // ensuring the MIME boundaries in the HTML part are never corrupted.
     const encoder = new TextEncoder();
     const bytes = encoder.encode(pseudo);
     let binary = "";
@@ -591,13 +585,6 @@ async function buildPseudoEml(item) {
     'dkim-signature',
     'arc-'
   ];
-  // CHANGE 3: The forbidden header names above are stored WITHOUT trailing colons.
-  // The filter extracts headerName as line.split(':')[0].toLowerCase() which also has
-  // no colon, so headerName.startsWith(h) now correctly matches and blocks duplicate
-  // MIME-Version / Content-Type headers from transport headers bleeding into the EML.
-  // Previously the colon mismatch ('mime-version' vs 'mime-version:') meant these
-  // headers were never filtered, causing Python's email parser to find a duplicate
-  // Content-Type header and collapse the multipart structure to plain text.
   
   let cleanHeaders = '';
   if (transportHeaders && transportHeaders.trim()) {
@@ -682,12 +669,6 @@ Content-Type: multipart/alternative; boundary="${boundary}"
 
 `;
 
-    // Text part
-    // CHANGE 2a: Use 8bit instead of 7bit for the plain text part.
-    // 7bit declares all content is ASCII with lines <=998 chars, which is often false
-    // for Outlook emails. 8bit tells Python's email parser to treat the payload as
-    // raw bytes that may contain high bytes, which matches how we decode it on the
-    // server side with .decode("utf-8", errors="replace").
     eml += `--${boundary}
 Content-Type: text/plain; charset="utf-8"
 Content-Transfer-Encoding: 8bit
@@ -696,12 +677,6 @@ ${bodyText || ""}
 
 `;
 
-    // HTML part
-    // CHANGE 2b: Use 8bit instead of 7bit for the HTML part.
-    // This is the critical fix for the missing HTML body: HTML from Outlook routinely
-    // contains Unicode characters and long lines that violate the 7bit constraint.
-    // With 7bit declared, Python's email library may misread the payload boundaries,
-    // causing get_payload(decode=True) to return nothing or truncated content.
     eml += `--${boundary}
 Content-Type: text/html; charset="utf-8"
 Content-Transfer-Encoding: 8bit
@@ -745,12 +720,6 @@ async function getAttachmentsMetadata(item) {
         id: attachment.id || null
       };
 
-      // Note: We can't easily get the attachment content from Outlook Web Add-in
-      // The backend will need to handle this differently
-      // Options:
-      // 1. Backend extracts attachments from the raw EML
-      // 2. We send attachment IDs and backend fetches via Graph API
-      // 3. We fetch attachment content here (requires getAttachmentContentAsync)
       
       attachments.push(metadata);
     } catch (err) {
@@ -761,7 +730,7 @@ async function getAttachmentsMetadata(item) {
   return attachments;
 }
 
-// --- VT attachment hashing helpers (additive) ---
+// --- VT attachment hashing helpers ---
 
 function base64ToArrayBuffer(base64) {
   const binaryString = atob(base64);
@@ -850,57 +819,3 @@ function getAsyncProm(item, method, opts) {
     });
   });
 }
-
-/* =====================================================================
-   TEMP DEBUG EML BUILDER (DELETE AFTER TESTING)
-   This section adds a debug button that shows the COMPLETE EML
-   that will be sent to Sublime API.
-===================================================================== */
-
-Office.onReady(() => {
-  const debugBtn = document.getElementById("debugExtractBtn");
-  if (!debugBtn) return;
-
-  debugBtn.addEventListener("click", debugShowEML);
-});
-
-async function debugShowEML() {
-  const item = Office.context.mailbox.item;
-  const outputBox = document.getElementById("debugOutput");
-  const outputText = document.getElementById("debugText");
-
-  if (!item) {
-    outputText.textContent = "No email selected.";
-    outputBox.classList.remove("hidden");
-    return;
-  }
-
-  outputText.textContent = "Building EML...\n";
-  outputBox.classList.remove("hidden");
-
-  try {
-    // 🔨 Build the EXACT EML that will be sent
-    const eml = await buildPseudoEml(item);
-
-    // 🧪 Display the complete EML structure
-    outputText.textContent =
-`===== COMPLETE EML STRUCTURE =====
-Total Length: ${eml.length} characters
-
-${eml}
-
-===== END OF EML =====
-
-📋 Copy this output to verify:
-- Blank line exists after headers?
-- MIME boundaries match?
-- Content-Transfer-Encoding correct?
-- No duplicate headers?`;
-
-  } catch (err) {
-    outputText.textContent = "EML build failed:\n" + err.message + "\n\n" + err.stack;
-    console.error("Debug EML error:", err);
-  }
-}
-
-/* ================= END TEMP DEBUG EML BUILDER ================= */
