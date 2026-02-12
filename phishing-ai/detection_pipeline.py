@@ -448,8 +448,6 @@ class DetectionPipeline:
                     "label": result["label"],
                     "confidence": confidence,   # raw model confidence
                     "is_phishing": is_phishing,
-                    "scanned": "body_only",
-                    "chars_used": len(text),
                 }
             )
         except Exception as e:
@@ -953,6 +951,33 @@ class DetectionPipeline:
                 "malicious_count": total_malicious  # For Gemini summary
             }
         )
+    
+    def _normalize_vt_attachments(self, vt_attachments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Normalize client-provided VT attachment hashes into the same structure
+        as _extract_attachment() returns (at least the keys VT check expects).
+        """
+        normalized = []
+        for a in vt_attachments or []:
+            sha256 = a.get("sha256")
+            filename = a.get("filename") or a.get("name") or "unknown"
+            if not sha256:
+                continue
+
+            ext = ""
+            if "." in filename:
+                ext = "." + filename.rsplit(".", 1)[1].lower()
+
+            normalized.append({
+                "filename": filename,
+                "sha256": sha256,
+                "extension": ext,
+                "is_dangerous_extension": ext in self.DANGEROUS_EXTENSIONS,
+                "size": a.get("size", 0),
+                "content_type": a.get("contentType") or a.get("content_type") or "application/octet-stream",
+            })
+        return normalized
+
 
     def get_gemini_reasoning(
         self,
@@ -984,7 +1009,7 @@ class DetectionPipeline:
 
     # --- Main Pipeline ---
 
-    def run(self, raw_email: str) -> PipelineResult:
+    def run(self, raw_email: str, vt_attachments: Optional[List[Dict[str, Any]]] = None) -> PipelineResult:
         """
         Run the full detection pipeline on an email.
         Returns aggregated verdict and all check results.
@@ -992,6 +1017,10 @@ class DetectionPipeline:
         # Parse email
         email_data = self.parse_email(raw_email)
         email_hash = hashlib.sha256(raw_email.encode()).hexdigest()[:16]
+
+        # If your pseudo-EML has no real attachments, use client-provided hashes for VT
+        if (not email_data.get("attachments")) and vt_attachments:
+            email_data["attachments"] = self._normalize_vt_attachments(vt_attachments)
 
         # Define checks to run in parallel
         checks = [

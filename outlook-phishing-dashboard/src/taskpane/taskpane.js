@@ -218,7 +218,6 @@ function colorClassForSublime(score) {
   return "red";                       // High risk
 }
 
-
 function setQuarantineVisibility(verdict) {
   const section = document.getElementById("quarantineSection");
   const btn = document.getElementById("quarantineBtn");
@@ -297,13 +296,14 @@ async function scanCurrentEmail() {
   try {
     const eml = await getEmlFromItem(item);
     const attachments = await getAttachmentsMetadata(item);
+    const vt_attachments = await getVirusTotalAttachmentHashes(item);
 
     setStatus("Analyzing...");
 
     const res = await fetch(`${API_BASE}/check`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ eml, attachments })
+      body: JSON.stringify({ eml, attachments, vt_attachments })
     });
 
     if (!res.ok) throw new Error(`Analyze failed (${res.status})`);
@@ -574,8 +574,11 @@ async function buildPseudoEml(item) {
   const subject = item.subject || "(No Subject)";
   const from = item.from?.emailAddress || item.from?.displayName || "unknown@unknown.com";
   const to = (item.to || []).map(x => x.emailAddress || x.displayName).join(", ") || "undisclosed-recipients";
-  const date = item.dateTimeCreated ? new Date(item.dateTimeCreated).toUTCString() : new Date().toUTCString();
-  const messageId = item.internetMessageId || `<${Date.now()}@outlook.com>`;
+  const date = item.dateTimeCreated
+  ? new Date(item.dateTimeCreated).toUTCString()
+  : "Thu, 01 Jan 1970 00:00:00 GMT";
+
+  const messageId = item.internetMessageId || `<static-fallback@outlook.com>`;
 
   // Get attachment metadata (for VirusTotal check)
   const attachments = await getAttachmentsMetadata(item);
@@ -650,7 +653,14 @@ async function buildPseudoEml(item) {
   }
 
   // Build RFC822 with BOTH text and HTML
-  const boundary = "----=_NextPart_" + Date.now().toString(36);
+  const stableId =
+  item.internetMessageId ||
+  item.itemId ||
+  item.conversationId ||
+  `${item.subject || ""}_${item.from?.emailAddress || ""}`;
+
+  const boundary = "----=_NextPart_" + btoa(unescape(encodeURIComponent(stableId))).replace(/[^A-Za-z0-9]/g, "").slice(0, 24);
+
   
   let eml = `From: ${from}
 To: ${to}
@@ -749,6 +759,85 @@ async function getAttachmentsMetadata(item) {
   }
 
   return attachments;
+}
+
+// --- VT attachment hashing helpers (additive) ---
+
+function base64ToArrayBuffer(base64) {
+  const binaryString = atob(base64);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
+  return bytes.buffer;
+}
+
+async function sha256Hex(arrayBuffer) {
+  const hashBuffer = await crypto.subtle.digest("SHA-256", arrayBuffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Compute SHA256 hashes for attachments for VirusTotal lookup.
+ * - Does NOT change your existing "attachments" payload
+ * - Returns a separate array for "vt_attachments"
+ */
+async function getVirusTotalAttachmentHashes(item, options = {}) {
+  const MAX_ATTACHMENTS = options.maxAttachments ?? 3;
+  const MAX_SIZE_BYTES = options.maxSizeBytes ?? (5 * 1024 * 1024); // 5MB
+  const SKIP_INLINE = options.skipInline ?? true;
+
+  if (!item?.attachments || item.attachments.length === 0) return [];
+
+  // Some Outlook clients may not support getAttachmentContentAsync reliably
+  if (typeof item.getAttachmentContentAsync !== "function") {
+    console.warn("getAttachmentContentAsync not available on this client; skipping vt_attachments.");
+    return [];
+  }
+
+  const vt = [];
+  const candidates = item.attachments
+    .filter(a => (SKIP_INLINE ? !a.isInline : true))
+    .slice(0, MAX_ATTACHMENTS);
+
+  for (const att of candidates) {
+    try {
+      const filename = att.name || "unknown";
+      const size = att.size || 0;
+      const contentType = att.contentType || "application/octet-stream";
+      const id = att.id || null;
+
+      if (!id) continue;
+      if (size > MAX_SIZE_BYTES) {
+        console.warn(`Skipping VT hash (too large): ${filename} (${size} bytes)`);
+        continue;
+      }
+
+      const content = await new Promise((resolve) => {
+        item.getAttachmentContentAsync(id, (res) => {
+          if (res.status === Office.AsyncResultStatus.Succeeded) resolve(res.value);
+          else resolve(null);
+        });
+      });
+
+      if (!content) continue;
+
+      // We only support Base64 attachments for hashing here
+      if (content.format !== Office.MailboxEnums.AttachmentContentFormat.Base64) {
+        console.warn(`Skipping unsupported attachment format for ${filename}:`, content.format);
+        continue;
+      }
+
+      const buffer = base64ToArrayBuffer(content.content);
+      const sha256 = await sha256Hex(buffer);
+
+      vt.push({ filename, size, contentType, sha256 });
+    } catch (e) {
+      console.warn("Failed to hash attachment for VT:", att?.name, e);
+    }
+  }
+
+  return vt;
 }
 
 // ================= PROMISIFY =================

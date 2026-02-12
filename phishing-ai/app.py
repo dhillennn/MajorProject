@@ -219,7 +219,7 @@ def audit_log(event_type: str):
 
 # --- Notification Functions ---
 
-def send_teams_notification(subject: str, verdict: str, confidence: float,
+def send_teams_notification(subject: str, sender:str, verdict: str, confidence: float,
                            reporter: Optional[str] = None) -> bool:
     """Send notification to Microsoft Teams webhook."""
     if not Config.TEAMS_WEBHOOK_URL:
@@ -236,6 +236,7 @@ def send_teams_notification(subject: str, verdict: str, confidence: float,
                 "activityTitle": "Phishing Email Reported",
                 "facts": [
                     {"name": "Subject", "value": subject[:100]},
+                    {"name": "Sender", "value": sender[:100]},
                     {"name": "Verdict", "value": verdict},
                     {"name": "Confidence", "value": f"{confidence:.1f}%"},
                     {"name": "Reported By", "value": reporter or "Unknown"},
@@ -252,7 +253,7 @@ def send_teams_notification(subject: str, verdict: str, confidence: float,
         return False
 
 
-def send_telegram_notification(subject: str, verdict: str, confidence: float,
+def send_telegram_notification(subject: str, sender: str, verdict: str, confidence: float,
                                reporter: Optional[str] = None) -> bool:
     """Send notification to Telegram bot."""
     if not Config.TELEGRAM_BOT_TOKEN or not Config.TELEGRAM_CHAT_ID:
@@ -263,6 +264,7 @@ def send_telegram_notification(subject: str, verdict: str, confidence: float,
         message = (
             f"*Phishing Email Reported*\n\n"
             f"*Subject:* {subject[:100]}\n"
+            f"*Sender:* {sender[:100]}\n"
             f"*Verdict:* {verdict}\n"
             f"*Confidence:* {confidence:.1f}%\n"
             f"*Reporter:* {reporter or 'Unknown'}\n"
@@ -282,7 +284,7 @@ def send_telegram_notification(subject: str, verdict: str, confidence: float,
         return False
 
 
-def send_whatsapp_notification(subject: str, verdict: str, confidence: float,
+def send_whatsapp_notification(subject: str, sender: str, verdict: str, confidence: float,
                                reporter: Optional[str] = None) -> bool:
     """Send notification via Twilio WhatsApp."""
     if not all([Config.WHATSAPP_TWILIO_SID, Config.WHATSAPP_TWILIO_TOKEN,
@@ -294,6 +296,7 @@ def send_whatsapp_notification(subject: str, verdict: str, confidence: float,
         message = (
             f"Phishing Alert\n\n"
             f"Subject: {subject[:80]}\n"
+            f"Sender: {sender[:80]}\n"
             f"Verdict: {verdict}\n"
             f"Confidence: {confidence:.1f}%\n"
             f"Reporter: {reporter or 'Unknown'}"
@@ -346,6 +349,9 @@ def check_email():
         data = request.get_json(force=True)
         eml = data.get("eml", "").strip()
 
+        # Optional VT attachment hashes from taskpane
+        vt_attachments = data.get("vt_attachments") or []
+
         # Validate input
         try:
             eml = validate_eml_input(eml)
@@ -384,7 +390,7 @@ def check_email():
 
         # Run detection pipeline
         pipeline = get_pipeline()
-        result: PipelineResult = pipeline.run(eml)
+        result: PipelineResult = pipeline.run(eml, vt_attachments=vt_attachments)
 
         # Parse email for metadata
         email_data = pipeline.parse_email(eml)
@@ -533,12 +539,13 @@ def report_phishing():
         email_data = pipeline.parse_email(eml)
         subject = email_data.get("subject", "No Subject")
         email_hash = compute_email_hash(eml)
+        sender = email_data.get("from_addr", "Unknown")
 
         # Send notifications
         notifications = {
-            "teams": send_teams_notification(subject, result.verdict, result.confidence, reporter),
-            "telegram": send_telegram_notification(subject, result.verdict, result.confidence, reporter),
-            "whatsapp": send_whatsapp_notification(subject, result.verdict, result.confidence, reporter)
+            "teams": send_teams_notification(subject, sender, result.verdict, result.confidence, reporter),
+            "telegram": send_telegram_notification(subject, sender, result.verdict, result.confidence, reporter),
+            "whatsapp": send_whatsapp_notification(subject, sender, result.verdict, result.confidence, reporter)
         }
 
         any_sent = any(notifications.values())
