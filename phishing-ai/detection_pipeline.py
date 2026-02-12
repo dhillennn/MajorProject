@@ -352,85 +352,39 @@ class DetectionPipeline:
                     pass
 
         return hops
-    
-    def _clean_email_for_sublime(self, eml: str) -> str:
+
+    def _build_clean_email_for_sublime(self, email_data: Dict) -> str:
+            """
+            Build a completely clean RFC822 email from parsed email_data.
+            
+            This avoids ALL the parsing issues by constructing from scratch
+            using only the parsed fields (from, to, subject, body).
+            """
+            
+            # Extract clean fields from parsed email_data
+            from_addr = email_data.get("from_addr", "unknown@example.com")
+            to_addr = email_data.get("to", "recipient@example.com")
+            subject = email_data.get("subject", "No Subject")
+            body_text = email_data.get("body_text", "")
+            
+            # Get date from parsed data or use current
+            import email.utils
+            from datetime import datetime
+            date_str = email.utils.formatdate(localtime=True)
+            
+            # Build MINIMAL, CLEAN RFC822 email
+            clean_email = f"""From: {from_addr}
+        To: {to_addr}
+        Subject: {subject}
+        Date: {date_str}
+        MIME-Version: 1.0
+        Content-Type: text/plain; charset="utf-8"
+        Content-Transfer-Encoding: 7bit
+
+        {body_text}
         """
-        Clean email to avoid Sublime parsing errors.
-        
-        Removes:
-        1. RFC 2047 encoded-word headers (=?charset?encoding?content?=)
-        2. Base64 encoded sections
-        3. Problematic headers that cause parsing issues
-        """
-        import re
-        
-        lines = eml.split('\n')
-        result = []
-        in_encoded_header = False
-        in_base64_section = False
-        current_header = None
-        
-        # Headers to completely skip
-        skip_headers = [
-            'x-microsoft-antispam-message-info',
-            'x-microsoft-antispam',
-            'dkim-signature',
-            'arc-seal',
-            'arc-message-signature',
-            'arc-authentication-results'
-        ]
-        
-        for line in lines:
-            lower_line = line.lower().strip()
             
-            # Check if this is a new header line
-            if line and ':' in line and not line.startswith((' ', '\t')):
-                # Extract header name
-                header_name = line.split(':', 1)[0].lower().strip()
-                current_header = header_name
-                
-                # Skip problematic headers entirely
-                if any(skip in header_name for skip in skip_headers):
-                    in_encoded_header = True
-                    continue
-                
-                # Check for RFC 2047 encoded-word in header value
-                if '=?' in line and '?=' in line:
-                    # This header has encoded content - skip it
-                    in_encoded_header = True
-                    continue
-                
-                in_encoded_header = False
-            
-            # Skip continuation lines of encoded headers
-            if in_encoded_header and line.startswith((' ', '\t')):
-                # Check if this continuation line also has encoded-word
-                if '=?' in line and '?=' in line:
-                    continue
-                # Even without =?, skip continuation of problematic headers
-                if current_header and any(skip in current_header for skip in skip_headers):
-                    continue
-                # Reset if we hit a normal continuation
-                in_encoded_header = False
-            
-            # Detect and skip base64 sections
-            if 'content-transfer-encoding: base64' in lower_line:
-                in_base64_section = True
-                result.append(line)
-                continue
-            
-            if in_base64_section:
-                # Check if we hit a boundary or new header (end of base64 section)
-                if line.startswith('--') or (line and ':' in line and not line.startswith((' ', '\t'))):
-                    in_base64_section = False
-                    result.append(line)
-                else:
-                    # Skip base64 content
-                    continue
-            elif not in_encoded_header:
-                result.append(line)
-        
-        return '\n'.join(result)
+            return clean_email
 
     # --- Individual Check Methods ---
 
@@ -757,14 +711,17 @@ class DetectionPipeline:
     def check_sublime_security(self, email_data: Dict) -> CheckResult:
         """Run Sublime Security attack score API."""
         try:
-            raw = email_data["raw"]
+            # Build a CLEAN email from scratch using parsed data
+            clean_email = self._build_clean_email_for_sublime(email_data)
             
-            # CRITICAL: Clean the email to remove problematic headers
-            raw = self._clean_email_for_sublime(raw)
+            logger.info("="*80)
+            logger.info("CLEAN EMAIL BEING SENT TO SUBLIME:")
+            logger.info("="*80)
+            logger.info(clean_email)
+            logger.info("="*80)
             
-            # Send plain text RFC822 directly (NO base64 encoding)
             result = sublime_attack_score(
-                raw,
+                clean_email,
                 timeout_s=20,
                 raise_for_http_errors=False
             )
@@ -772,7 +729,6 @@ class DetectionPipeline:
             if "error" in result:
                 return CheckResult(name="sublime", error=result.get("error"))
 
-            # Sublime returns score 0-100 and verdict (malicious/benign)
             score = result.get("score", 0)
             verdict = result.get("verdict", "unknown")
             top_signals = result.get("top_signals", [])

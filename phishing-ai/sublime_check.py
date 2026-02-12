@@ -1,4 +1,5 @@
 import requests
+import base64
 import logging
 from typing import Dict, Any, Optional
 
@@ -17,15 +18,27 @@ def sublime_attack_score(
     HTTP Request:
 
       POST https://analyzer.sublime.security/v0/messages/attack_score
-      JSON: { "raw_message": "<rfc822>" }
+      JSON: { "raw_message": "<base64-encoded-rfc822>" }
 
     Returns the raw JSON response from Sublime.
     
     Args:
-        raw_message_rfc822: Plain text RFC822 email (NOT base64 encoded)
+        raw_message_rfc822: Plain text RFC822 email (will be base64 encoded before sending)
     """
     
-    payload = {"raw_message": raw_message_rfc822}
+    # Sublime requires base64-encoded email in the raw_message field
+    try:
+        # Encode the RFC822 email as base64
+        raw_bytes = raw_message_rfc822.encode('utf-8')
+        base64_encoded = base64.b64encode(raw_bytes).decode('ascii')
+        
+        logger.info(f"Encoding email for Sublime: {len(raw_message_rfc822)} chars → {len(base64_encoded)} base64 chars")
+        
+    except Exception as e:
+        logger.error(f"Failed to base64 encode email: {e}")
+        raise
+    
+    payload = {"raw_message": base64_encoded}
 
     resp = requests.post(
         SUBLIME_ATTACK_SCORE_URL,
