@@ -91,16 +91,24 @@ class DetectionPipeline:
         """Lazy load the HuggingFace phishing model."""
         if not self._model_loaded:
             from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline
+            import torch
+            
             tokenizer = AutoTokenizer.from_pretrained("ElSlay/BERT-Phishing-Email-Model")
             model = AutoModelForSequenceClassification.from_pretrained("ElSlay/BERT-Phishing-Email-Model")
+            
+            # Set model to evaluation mode for consistent inference
+            model.eval()
+            
             self._phish_pipeline = pipeline(
                 "text-classification",
                 model=model,
                 tokenizer=tokenizer,
                 truncation=True,
-                max_length=1024
+                max_length=512  # BERT's maximum token limit
+                # Removed padding="max_length" - it caused distribution shift and hurt accuracy
             )
             self._model_loaded = True
+            logger.info("BERT phishing model loaded successfully")
         return self._phish_pipeline
 
     # Dangerous file extensions that are commonly used in phishing
@@ -115,11 +123,14 @@ class DetectionPipeline:
     def parse_email(self, raw_email: str) -> Dict[str, Any]:
         """Parse raw email or EML content into structured data including attachments."""
         # Handle base64-encoded EML from taskpane
+        # CHANGE 4: Log decode failures instead of silently swallowing them
         if raw_email.startswith("__BASE64_EML__:"):
             try:
                 b64_data = raw_email.split(":", 1)[1]
                 raw_email = base64.b64decode(b64_data).decode("utf-8", errors="replace")
-            except Exception:
+                logger.debug("Base64 EML decoded successfully, length=%d", len(raw_email))
+            except Exception as e:
+                logger.error("Failed to decode base64 EML: %s", e)
                 pass  # Fall through to parse as-is
 
         # Check if this looks like a proper email with headers
@@ -176,6 +187,15 @@ class DetectionPipeline:
             for part in msg.walk():
                 content_type = part.get_content_type()
                 content_disposition = str(part.get("Content-Disposition", ""))
+
+                # CHANGE 5: Explicitly skip multipart container parts.
+                # msg.walk() yields the container itself before its children. These parts
+                # have no payload of their own and no filename, so they would silently
+                # fall through all branches below and do nothing — but making it explicit
+                # prevents any edge case where a malformed container has an unexpected
+                # filename and gets misrouted into _extract_attachment.
+                if content_type in ("multipart/alternative", "multipart/mixed", "multipart/related"):
+                    continue
 
                 # Check if this is an attachment
                 if "attachment" in content_disposition or part.get_filename():
@@ -392,6 +412,9 @@ class DetectionPipeline:
         """Run HuggingFace BERT phishing model."""
         try:
             model = self._get_phish_model()
+            
+            # Use full_text which contains all headers and email metadata
+            # The model was trained on complete email format, not just From/Subject/Body
             text = email_data["full_text"][:2048]  # Truncate for model
 
             result = model(text)[0]
@@ -751,6 +774,7 @@ class DetectionPipeline:
     def check_urlscan(self, email_data: Dict) -> CheckResult:
         """Run URLScan.io on URLs in email."""
         urls = self.extract_urls(email_data["body_text"])
+        
         if not urls:
             return CheckResult(name="urlscan", passed=True, score=0, details={"skipped": True})
 
@@ -760,6 +784,12 @@ class DetectionPipeline:
 
         # Only scan first URL to avoid rate limits
         url = urls[0]
+        
+        # Clean up malformed URLs (trailing &, =, etc. from HTML extraction)
+        url = url.rstrip('&=')
+        
+        logger.info(f"URLscan - Scanning cleaned URL: {url}")
+        
         try:
             result = urlscan_check_url(url, api_key=api_key, timeout_s=20)
 
@@ -775,8 +805,28 @@ class DetectionPipeline:
                 details={"url": url, "malicious": malicious, "verdicts": verdicts}
             )
         except TimeoutError:
+            logger.warning(f"URLscan - Timeout scanning URL: {url}")
             return CheckResult(name="urlscan", error="Scan timeout", passed=True, score=0)
+        
+        except RuntimeError as e:
+            logger.warning(f"URLscan - Runtime error for {url}: {e}")
+
+            if "DNS Error" in str(e):
+                return CheckResult(
+                    name="urlscan",
+                    passed=False,
+                    score=40,
+                    details={
+                        "url": url,
+                        "reason": "Domain does not resolve (DNS failure)"
+                    }
+                )
+
+            # Re-raise other runtime errors
+            raise
+
         except Exception as e:
+            logger.error(f"URLscan - Error scanning URL {url}: {e}")
             return CheckResult(name="urlscan", error=str(e))
 
     def check_virustotal(self, email_data: Dict) -> CheckResult:

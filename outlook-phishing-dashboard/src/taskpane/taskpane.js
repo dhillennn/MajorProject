@@ -1,5 +1,5 @@
 // ================= CONFIG =================
-const API_BASE = "https://majorproject-production-a975.up.railway.app";
+const API_BASE = "http://localhost:5000";
 const POLL_INTERVAL = 500; // Check every 500ms for item changes
 
 // ================= STATE =================
@@ -494,7 +494,17 @@ function getAccessToken() {
 async function getEmlFromItem(item) {
   try {
     const pseudo = await buildPseudoEml(item);
-    const base64 = btoa(unescape(encodeURIComponent(pseudo)));
+    // CHANGE 1: Use TextEncoder for Unicode-safe base64 encoding.
+    // The previous btoa(unescape(encodeURIComponent(...))) approach silently corrupts
+    // or truncates strings containing Unicode characters (curly quotes, em-dashes,
+    // non-breaking spaces, etc.) that are common in HTML email bodies from Outlook.
+    // TextEncoder converts the full string to a proper UTF-8 byte array first,
+    // ensuring the MIME boundaries in the HTML part are never corrupted.
+    const encoder = new TextEncoder();
+    const bytes = encoder.encode(pseudo);
+    let binary = "";
+    bytes.forEach(b => binary += String.fromCharCode(b));
+    const base64 = btoa(binary);
     return `__BASE64_EML__:${base64}`;
   } catch (err) {
     console.error("Failed to build EML:", err);
@@ -560,12 +570,19 @@ async function buildPseudoEml(item) {
 
   // FILTER transport headers to remove problematic encoded headers
   const forbiddenHeaders = [
-    'from:', 'to:', 'subject:', 'date:', 'message-id:',
-    'mime-version:', 'content-type:', 'content-transfer-encoding:',
+    'from', 'to', 'subject', 'date', 'message-id',
+    'mime-version', 'content-type', 'content-transfer-encoding',
     'x-microsoft-antispam',  // Problematic for Sublime (but Sublime won't see these anyway)
     'dkim-signature',
     'arc-'
   ];
+  // CHANGE 3: The forbidden header names above are stored WITHOUT trailing colons.
+  // The filter extracts headerName as line.split(':')[0].toLowerCase() which also has
+  // no colon, so headerName.startsWith(h) now correctly matches and blocks duplicate
+  // MIME-Version / Content-Type headers from transport headers bleeding into the EML.
+  // Previously the colon mismatch ('mime-version' vs 'mime-version:') meant these
+  // headers were never filtered, causing Python's email parser to find a duplicate
+  // Content-Type header and collapse the multipart structure to plain text.
   
   let cleanHeaders = '';
   if (transportHeaders && transportHeaders.trim()) {
@@ -644,18 +661,28 @@ Content-Type: multipart/alternative; boundary="${boundary}"
 `;
 
     // Text part
+    // CHANGE 2a: Use 8bit instead of 7bit for the plain text part.
+    // 7bit declares all content is ASCII with lines <=998 chars, which is often false
+    // for Outlook emails. 8bit tells Python's email parser to treat the payload as
+    // raw bytes that may contain high bytes, which matches how we decode it on the
+    // server side with .decode("utf-8", errors="replace").
     eml += `--${boundary}
 Content-Type: text/plain; charset="utf-8"
-Content-Transfer-Encoding: 7bit
+Content-Transfer-Encoding: 8bit
 
 ${bodyText || ""}
 
 `;
 
     // HTML part
+    // CHANGE 2b: Use 8bit instead of 7bit for the HTML part.
+    // This is the critical fix for the missing HTML body: HTML from Outlook routinely
+    // contains Unicode characters and long lines that violate the 7bit constraint.
+    // With 7bit declared, Python's email library may misread the payload boundaries,
+    // causing get_payload(decode=True) to return nothing or truncated content.
     eml += `--${boundary}
 Content-Type: text/html; charset="utf-8"
-Content-Transfer-Encoding: 7bit
+Content-Transfer-Encoding: 8bit
 
 ${bodyHtml}
 
@@ -666,7 +693,7 @@ ${bodyHtml}
     // Plain text only
     eml += `MIME-Version: 1.0
 Content-Type: text/plain; charset="utf-8"
-Content-Transfer-Encoding: 7bit
+Content-Transfer-Encoding: 8bit
 
 ${bodyText || ""}
 `;
