@@ -479,7 +479,14 @@ class DetectionPipeline:
         urls = self.extract_urls(email_data["body_text"] + " " + email_data.get("body_html", ""))
         domains = self.extract_domains(urls)
 
-        shortened = [d for d in domains if any(s in d for s in self.SHORTENERS)]
+        shortened = [
+            d for d in domains
+            if any(
+                d == s or d.endswith("." + s)
+                for s in self.SHORTENERS
+            )
+        ]
+
 
         return CheckResult(
             name="shortened_urls",
