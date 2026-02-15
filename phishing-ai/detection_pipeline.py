@@ -1104,8 +1104,8 @@ class DetectionPipeline:
         Uses a hybrid approach: weighted average + boost for strong signals.
         """
         weights = {
-            "bert_model": 0.55,
-            "sublime": 0.15,
+            "bert_model": 0.60,
+            "sublime": 0.10,
             "urlscan": 0.05,
             "virustotal": 0.04,
             "header_mismatch": 0.03,

@@ -25,8 +25,8 @@ A production-ready phishing detection system that integrates directly with Micro
 │   - Scan Email button           │                        │   ┌─────────────────────────────┐   │
 │   - Auto-scan mode              │    POST /check         │   │   Parallel Detection        │   │
 │   - Quarantine button           │◄──────────────────────┐│   │                             │   │
-│   - Report Phishing button      │   {verdict, scores,   ││   │  1. BERT Model (50%)        │   │
-│   - Verdict display             │    reasons, indicators}││  │  2. Sublime Security (20%)  │   │
+│   - Report Phishing button      │   {verdict, scores,   ││   │  1. BERT Model (60%)        │   │
+│   - Verdict display             │    reasons, indicators}││  │  2. Sublime Security (10%)  │   │
 │                                 │                        ││  │  3. HTML Threats (2%)       │   │
 └─────────────────────────────────┘                        ││  │  4. Header Mismatch (3%)    │   │
                                                            ││  │  5. Urgency Keywords (8%)   │   │
@@ -51,7 +51,7 @@ A production-ready phishing detection system that integrates directly with Micro
                                                            │                                     │
                                                            ├──► Teams Webhook                    │
                                                            ├──► Telegram Bot                     │
-                                                                                                 │
+                                                           └──► WhatsApp (Twilio)                │
                                                                                                  │
                                                            └─────────────────────────────────────┘
 ```
@@ -96,8 +96,8 @@ The platform runs 12 detection checks in parallel and aggregates results using w
 
 | Check | Weight | Description |
 |-------|--------|-------------|
-| BERT Model | 55% | HuggingFace phishing classifier |
-| Sublime Security | 15% | Commercial attack score API |
+| BERT Model | 60% | HuggingFace phishing classifier |
+| Sublime Security | 10% | Commercial attack score API |
 | HTML Threats | 2% | Hidden elements, suspicious scripts |
 | Header Mismatch | 3% | From vs Reply-To comparison |
 | Urgency Keywords | 8% | Pressure language detection |
@@ -407,7 +407,6 @@ ai-phishing/
 ├── docker-compose.yml          # Service orchestration
 ├── .env.example                # Environment template
 ├── README.md                   # This file
-├── CLAUDE.md                   # AI assistant context
 │
 ├── phishing-ai/                # Backend API
 │   ├── app.py                  # Flask application
@@ -494,21 +493,9 @@ Ensure `CLOUDFLARE_TUNNEL_URL` or `ALLOWED_ORIGIN` is set correctly.
 
 ### Quarantine not working
 
-- Ensure manifest has `ReadWriteMailbox` permission
-- Re-sideload the add-in after manifest changes
-- Check Outlook version supports EWS/REST API
+- Currently proof of concept (Require Microsoft Developer)
 
 ## License
 
 MIT License - See LICENSE file for details.
 
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
-
-## Support
-
-For issues and feature requests, please open a GitHub issue.
