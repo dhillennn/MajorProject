@@ -18,6 +18,10 @@ services:
       # API Authentication
       - API_KEY=${API_KEY:-}
       - ADMIN_KEY=${ADMIN_KEY:-}
+      # Admin login Authentication
+      - FLASK_SECRET_KEY=${FLASK_SECRET_KEY:-}
+      - LOGIN_USERNAME=${LOGIN_USERNAME:-}
+      - LOGIN_PASSWORD=${LOGIN_PASSWORD:-}
       # External API Keys
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY:-}
