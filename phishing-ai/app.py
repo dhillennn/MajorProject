@@ -18,7 +18,7 @@ from functools import wraps
 from typing import Optional
 
 import requests
-from flask import Flask, request, jsonify, render_template, g, abort
+from flask import Flask, request, jsonify, render_template, g, abort, redirect, url_for, session
 from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -65,6 +65,9 @@ limiter = Limiter(
 class Config:
     API_KEY = os.getenv("API_KEY", "")  # Optional API key for authentication
     ADMIN_KEY = os.getenv("ADMIN_KEY", "")  # Optional admin key for dashboard
+    SECRET_KEY = os.getenv("FLASK_SECRET_KEY") # For session signing
+    USERNAME = os.getenv("LOGIN_USERNAME")
+    PASSWORD = os.getenv("LOGIN_PASSWORD")
 
     # Input validation limits
     MAX_EML_SIZE = int(os.getenv("MAX_EML_SIZE", 25 * 1024 * 1024))  # 25MB default
@@ -84,6 +87,7 @@ class Config:
     WHATSAPP_FROM = os.getenv("WHATSAPP_FROM", "")
     WHATSAPP_TO = os.getenv("WHATSAPP_TO", "")
 
+app.secret_key = Config.SECRET_KEY
 
 # --- Input Validation ---
 
@@ -173,6 +177,13 @@ def require_admin_key(f):
         return f(*args, **kwargs)
     return decorated
 
+def require_admin_login(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get("admin_logged_in"):
+            return redirect(url_for("admin_login"))
+        return f(*args, **kwargs)
+    return decorated
 
 def log_request(f):
     """Log incoming requests for audit."""
@@ -704,11 +715,34 @@ def index():
         check_results=check_results
     )
 
+# --- Admin Login ---
 
+@app.route("/admin/login", methods=["GET", "POST"])
+@limiter.limit("10 per minute")
+def admin_login():
+    error = None
+
+    if request.method == "POST":
+        username = request.form.get("username", "")
+        password = request.form.get("password", "")
+
+        if username == Config.USERNAME and password == Config.PASSWORD:
+            session["admin_logged_in"] = True
+            return redirect(url_for("admin_dashboard"))
+        else:
+            error = "Username or password is incorrect"
+
+    return render_template("admin/login.html", error=error)
+
+@app.route("/admin/logout")
+def admin_logout():
+    session.clear()
+    return redirect(url_for("admin_login"))
+    
 # --- Admin Dashboard ---
 
 @app.route("/admin")
-@require_admin_key
+@require_admin_login
 def admin_dashboard():
     """Admin dashboard with scan statistics and history."""
     # Get statistics
@@ -728,7 +762,7 @@ def admin_dashboard():
 
 
 @app.route("/admin/scans")
-@require_admin_key
+@require_admin_login
 def admin_scans():
     """View recent scans."""
     page = request.args.get("page", 1, type=int)
@@ -751,7 +785,7 @@ def admin_scans():
 
 
 @app.route("/admin/scans/<scan_id>")
-@require_admin_key
+@require_admin_login
 def admin_scan_detail(scan_id: str):
     """View scan details."""
     scan = db.get_scan_by_id(scan_id)
@@ -774,7 +808,7 @@ def admin_scan_detail(scan_id: str):
 
 
 @app.route("/admin/reports")
-@require_admin_key
+@require_admin_login
 def admin_reports():
     """View phishing reports."""
     page = request.args.get("page", 1, type=int)
@@ -794,7 +828,7 @@ def admin_reports():
 
 
 @app.route("/admin/audit")
-@require_admin_key
+@require_admin_login
 def admin_audit():
     """View audit log."""
     event_type = request.args.get("event_type")
