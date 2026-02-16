@@ -649,6 +649,70 @@
             color: var(--text-primary);
         }
 
+         /* Login page */
+        .login-wrapper {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 2rem;
+        }
+
+        .login-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 1rem;
+            padding: 3rem 2.5rem;
+            width: 100%;
+            max-width: 420px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.45);
+        }
+
+        .login-title {
+            text-align: center;
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: var(--accent-blue);
+            margin-bottom: 2.5rem;
+        }
+
+        .login-form .form-group {
+            margin-bottom: 1.75rem;
+        }
+
+        .login-form label {
+            display: block;
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.6rem;
+        }
+
+        .login-form input {
+            width: 100%;
+            padding: 0.9rem 1rem;
+            border-radius: 0.75rem;
+            border: 1px solid var(--border);
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            font-size: 1rem;
+            transition: all 0.2s ease;
+        }
+
+        .login-form input:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+            box-shadow: 0 0 0 3px rgba(59,130,246,0.25);
+        }
+
+        .login-btn {
+            width: 100%;
+            justify-content: center;
+            margin-top: 1rem;
+            padding: 0.9rem;
+            font-size: 1rem;
+            border-radius: 0.75rem;
+        }
+
         /* Responsive */
         @media (max-width: 768px) {
             .sidebar {
