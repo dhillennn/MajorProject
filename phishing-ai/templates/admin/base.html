@@ -13,6 +13,7 @@
             <a href="/admin" class="sidebar-brand">Phishing Detection</a>
             <nav>
                 <ul class="sidebar-nav">
+                    <li><a href="/admin/logout">Logout</a></li>
                     <li><a href="/admin" class="{% if request.path == '/admin' %}active{% endif %}">Dashboard</a></li>
                     <li><a href="/admin/scans" class="{% if '/scans' in request.path %}active{% endif %}">Scans</a></li>
                     <li><a href="/admin/reports" class="{% if '/reports' in request.path %}active{% endif %}">Reports</a></li>
