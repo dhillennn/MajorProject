@@ -199,6 +199,9 @@ Report a phishing email and trigger webhook notifications.
 | `GEMINI_API_KEY` | Recommended | Google Gemini for AI reasoning |
 | `API_KEY` | No | Enable API authentication |
 | `ADMIN_KEY` | No | Protect admin dashboard |
+| `FLASK_SECRET_KEY` | Yes | Session signing |
+| `LOGIN_USERNAME` | Yes | Protect admin pages |
+| `LOGIN_PASSWORD` | Yes | Protect admin pages |
 | `VIRUSTOTAL_API_KEY` | No | Enable VirusTotal checks |
 | `URLSCAN_API_KEY` | No | Enable URLScan.io checks |
 | `TEAMS_WEBHOOK_URL` | No | Microsoft Teams notifications |
@@ -306,7 +309,7 @@ const API_BASE = "https://your-tunnel-url.trycloudflare.com";
 
 ## Admin Dashboard
 
-Access the admin dashboard at `/admin` to view:
+Access the admin dashboard at `/admin` to view after login:
 
 - **Dashboard**: Interactive pie charts and scan statistics
 - **Scans**: Browse all email analyses with full details
@@ -314,7 +317,7 @@ Access the admin dashboard at `/admin` to view:
 - **Reports**: View user-reported phishing
 - **Audit Log**: System activity log
 
-Protect with `ADMIN_KEY` environment variable.
+Protect with `ADMIN_KEY`, `FLASK_SECRET_KEY`, `LOGIN_USERNAME` and `LOGIN_PASSWORD` environment variables.
 
 ### Dashboard Charts
 
@@ -423,6 +426,7 @@ ai-phishing/
 │   └── templates/              # HTML templates
 │       ├── index.html          # Web analyzer (shows all checks)
 │       ├── admin/              # Admin dashboard
+│       │   ├── login.html      # Admin Login
 │       │   ├── base.html       # Admin layout
 │       │   ├── dashboard.html  # Stats + charts
 │       │   ├── scans.html      # Scan history
@@ -445,7 +449,7 @@ ai-phishing/
 ## Security Considerations
 
 - **API Authentication**: Set `API_KEY` for production use
-- **Admin Protection**: Set `ADMIN_KEY` to protect dashboard
+- **Admin Protection**: Set `ADMIN_KEY` to protect dashboard | Set `FLASK_SECRET_KEY` to something random and secure to prevent brute forcing and session forging
 - **Rate Limiting**: Default 30 requests/minute per IP
 - **Input Validation**: 25MB email size limit
 - **Non-root Container**: Runs as unprivileged user
